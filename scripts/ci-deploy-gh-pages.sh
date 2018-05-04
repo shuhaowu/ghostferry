@@ -2,7 +2,7 @@
 
 set -xe
 
-REPO=git@github.com:Shopify/ghostferry.git
+REPO=git@github.com:shuhaowu/ghostferry.git
 REV=${CIRCLE_BRANCH:-$CIRCLE_TAG}
 
 pushd ~
