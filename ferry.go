@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/siddontang/go-mysql/replication"
 	"github.com/siddontang/go-mysql/schema"
 	"github.com/sirupsen/logrus"
 )
@@ -25,6 +26,10 @@ const (
 	StateCutover           = "cutover"
 	StateDone              = "done"
 )
+
+func init() {
+	replication.TimeStringLocation = time.UTC
+}
 
 func quoteField(field string) string {
 	return fmt.Sprintf("`%s`", field)
