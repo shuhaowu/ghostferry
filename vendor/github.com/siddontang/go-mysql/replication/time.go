@@ -7,7 +7,8 @@ import (
 )
 
 var (
-	fracTimeFormat []string
+	TimeStringLocation *time.Location
+	fracTimeFormat     []string
 )
 
 // fracTime is a help structure wrapping Golang Time.
@@ -19,7 +20,11 @@ type fracTime struct {
 }
 
 func (t fracTime) String() string {
-	return t.Format(fracTimeFormat[t.Dec])
+	tt := t.Time
+	if TimeStringLocation != nil {
+		tt = tt.In(TimeStringLocation)
+	}
+	return tt.Format(fracTimeFormat[t.Dec])
 }
 
 func formatZeroTime(frac int, dec int) string {
