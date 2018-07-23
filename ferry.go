@@ -3,8 +3,10 @@ package ghostferry
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -54,6 +56,8 @@ type Ferry struct {
 	DataIterator *DataIterator
 	BatchWriter  *BatchWriter
 
+	StateTracker *StateTracker
+
 	ErrorHandler ErrorHandler
 	Throttler    Throttler
 
@@ -83,6 +87,7 @@ func (f *Ferry) newDataIterator() (*DataIterator, error) {
 			BatchSize:   f.Config.DataIterationBatchSize,
 			ReadRetries: f.Config.DBReadRetries,
 		},
+		StateTracker: f.StateTracker,
 	}
 
 	if f.CopyFilter != nil {
@@ -201,11 +206,14 @@ func (f *Ferry) Initialize() (err error) {
 		f.Throttler = &PauserThrottler{}
 	}
 
+	f.StateTracker = NewStateTracker(f.DataIterationConcurrency*10, nil)
+
 	f.BinlogStreamer = &BinlogStreamer{
 		Db:           f.SourceDB,
 		Config:       f.Config,
 		ErrorHandler: f.ErrorHandler,
 		Filter:       f.CopyFilter,
+		StateTracker: f.StateTracker,
 	}
 	err = f.BinlogStreamer.Initialize()
 	if err != nil {
@@ -424,6 +432,21 @@ func (f *Ferry) FlushBinlogAndStopStreaming() {
 	}
 
 	f.BinlogStreamer.FlushAndStop()
+}
+
+func (f *Ferry) SerializableState() *SerializableState {
+	return f.StateTracker.Serialize(f.Tables)
+}
+
+func (f *Ferry) DumpJSONState(w io.Writer) (int, error) {
+	serializedState := f.SerializableState()
+	stateBytes, err := json.MarshalIndent(serializedState, "", "  ")
+	if err != nil {
+		logger.WithError(err).Error("failed to dump state to JSON, this is likely a programmer error")
+		return 0, err
+	}
+
+	return fmt.Fprintln(w, string(stateBytes))
 }
 
 func (f *Ferry) checkConnection(dbname string, db *sql.DB) error {

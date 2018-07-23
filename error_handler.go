@@ -3,6 +3,7 @@ package ghostferry
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"sync/atomic"
 
 	"github.com/sirupsen/logrus"
@@ -50,6 +51,8 @@ func (this *PanicErrorHandler) ReportError(from string, err error) {
 
 	// Print error to STDERR
 	logger.WithError(err).WithField("errfrom", from).Error("fatal error detected, state dump coming in stdout")
+
+	this.Ferry.DumpJSONState(os.Stdout)
 }
 
 func (this *PanicErrorHandler) Fatal(from string, err error) {
