@@ -51,6 +51,7 @@ func (this *DataIteratorTestSuite) SetupTest() {
 			BatchSize:   config.DataIterationBatchSize,
 			ReadRetries: config.DBReadRetries,
 		},
+		StateTracker: ghostferry.NewStateTracker(config.DataIterationConcurrency*10, nil),
 
 		Tables: tables.AsSlice(),
 	}
@@ -71,7 +72,7 @@ func (this *DataIteratorTestSuite) TestNoEventsForEmptyTable() {
 	this.di.Run()
 
 	this.Require().Equal(0, len(this.receivedRows))
-	this.Require().Equal(this.di.CurrentState.CompletedTables(), map[string]bool{fmt.Sprintf("%s.%s", testhelpers.TestSchemaName, testhelpers.TestTable1Name): true})
+	this.Require().Equal(this.completedTables(), map[string]bool{fmt.Sprintf("%s.%s", testhelpers.TestSchemaName, testhelpers.TestTable1Name): true})
 }
 
 func (this *DataIteratorTestSuite) TestExistingRowsAreIterated() {
@@ -93,7 +94,7 @@ func (this *DataIteratorTestSuite) TestExistingRowsAreIterated() {
 		datas = append(datas, data)
 	}
 
-	this.Require().Equal(0, len(this.di.CurrentState.CompletedTables()))
+	this.Require().Equal(0, len(this.completedTables()))
 
 	this.Require().Equal(5, len(ids))
 	this.Require().Equal(0, len(this.receivedRows))
@@ -110,7 +111,7 @@ func (this *DataIteratorTestSuite) TestExistingRowsAreIterated() {
 		this.Require().Equal(datas[idx], data)
 	}
 
-	this.Require().Equal(this.di.CurrentState.CompletedTables(), map[string]bool{fmt.Sprintf("%s.%s", testhelpers.TestSchemaName, testhelpers.TestTable1Name): true})
+	this.Require().Equal(this.completedTables(), map[string]bool{fmt.Sprintf("%s.%s", testhelpers.TestSchemaName, testhelpers.TestTable1Name): true})
 }
 
 func (this *DataIteratorTestSuite) TestDoneListenerGetsNotifiedWhenDone() {
@@ -126,8 +127,10 @@ func (this *DataIteratorTestSuite) TestDoneListenerGetsNotifiedWhenDone() {
 	this.Require().True(wasNotified)
 }
 
-func (this *DataIteratorTestSuite) TestInitialize() {
-	this.Require().NotNil(this.di.CurrentState)
+func (this *DataIteratorTestSuite) completedTables() map[string]bool {
+	serializedState := &ghostferry.SerializableState{}
+	this.di.StateTracker.Serialize(serializedState)
+	return serializedState.CompletedTables
 }
 
 func TestDataIterator(t *testing.T) {

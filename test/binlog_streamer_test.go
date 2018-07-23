@@ -36,6 +36,7 @@ func (this *FerryTestSuite) SetupTest() {
 		Config:       testFerry.Config,
 		ErrorHandler: testFerry.ErrorHandler,
 		Filter:       testFerry.CopyFilter,
+		StateTracker: ghostferry.NewStateTracker(10, nil),
 	}
 
 	this.Require().Nil(this.binlogStreamer.Initialize())

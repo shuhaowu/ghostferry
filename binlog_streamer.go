@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -19,6 +20,7 @@ type BinlogStreamer struct {
 	Config       *Config
 	ErrorHandler ErrorHandler
 	Filter       CopyFilter
+	StateTracker *StateTracker
 
 	TableSchema TableSchemaCache
 
@@ -35,9 +37,14 @@ type BinlogStreamer struct {
 	eventListeners []func([]DMLEvent) error
 }
 
-func (s *BinlogStreamer) Initialize() (err error) {
+func (s *BinlogStreamer) Initialize() error {
 	s.logger = logrus.WithField("tag", "binlog_streamer")
 	s.stopRequested = false
+
+	if s.StateTracker == nil {
+		return errors.New("StateTracker must be defined")
+	}
+
 	return nil
 }
 
@@ -86,6 +93,7 @@ func (s *BinlogStreamer) ConnectBinlogStreamerToMysql() error {
 		s.logger.WithError(err).Error("failed to read current binlog position")
 		return err
 	}
+	s.StateTracker.UpdateLastStreamedBinlogPosition(s.lastStreamedBinlogPosition)
 
 	s.logger.WithFields(logrus.Fields{
 		"file": s.lastStreamedBinlogPosition.Name,
@@ -168,6 +176,8 @@ func (s *BinlogStreamer) Run() {
 		default:
 			s.updateLastStreamedPosAndTime(ev)
 		}
+
+		s.StateTracker.UpdateLastStreamedBinlogPosition(s.lastStreamedBinlogPosition)
 	}
 }
 
