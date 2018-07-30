@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 
 	"github.com/siddontang/go-mysql/schema"
@@ -15,9 +16,10 @@ type DataIterator struct {
 	Tables      []*schema.Table
 	Concurrency int
 
-	ErrorHandler ErrorHandler
-	CursorConfig *CursorConfig
-	StateTracker *StateTracker
+	ErrorHandler           ErrorHandler
+	CursorConfig           *CursorConfig
+	StateTracker           *StateTracker
+	ResumingFromKnownState bool
 
 	targetPKs      *sync.Map
 	batchListeners []func(*RowBatch) error
@@ -38,7 +40,6 @@ func (d *DataIterator) Initialize() error {
 
 func (d *DataIterator) Run() {
 	d.logger.WithField("tablesCount", len(d.Tables)).Info("starting data iterator run")
-
 	tablesWithData, emptyTables, err := MaxPrimaryKeys(d.DB, d.Tables, d.logger)
 	if err != nil {
 		d.ErrorHandler.Fatal("data_iterator", err)
@@ -77,7 +78,15 @@ func (d *DataIterator) Run() {
 					return
 				}
 
-				cursor := d.CursorConfig.NewCursor(table, targetPKInterface.(uint64))
+				startPk := d.StateTracker.LastSuccessfulPK(table.String())
+				if startPk == math.MaxUint64 {
+					err := fmt.Errorf("%v has been marked as completed but a table iterator has been spawned, this is likely a programmer error which resulted in the inconsistent starting state", table.String())
+					logger.WithError(err).Error("this is definitely a bug")
+					d.ErrorHandler.Fatal("data_iterator", err)
+					return
+				}
+
+				cursor := d.CursorConfig.NewCursor(table, startPk, targetPKInterface.(uint64))
 				err := cursor.Each(func(batch *RowBatch) error {
 					metrics.Count("RowEvent", int64(batch.Size()), []MetricTag{
 						MetricTag{"table", table.Name},

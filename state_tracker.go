@@ -2,6 +2,7 @@ package ghostferry
 
 import (
 	"container/ring"
+	"math"
 	"sync"
 	"time"
 
@@ -47,6 +48,23 @@ func (s *StateTracker) UpdateLastSuccessfulPK(table string, pk uint64) {
 		Position: currentTotalPK + deltaPK,
 		At:       time.Now(),
 	}
+}
+
+func (s *StateTracker) LastSuccessfulPK(table string) uint64 {
+	s.tableMutex.RLock()
+	defer s.tableMutex.RUnlock()
+
+	_, found := s.completedTables[table]
+	if found {
+		return math.MaxUint64
+	}
+
+	pk, found := s.lastSuccessfulPrimaryKeys[table]
+	if !found {
+		return 0
+	}
+
+	return pk
 }
 
 func (s *StateTracker) MarkTableAsCompleted(table string) {

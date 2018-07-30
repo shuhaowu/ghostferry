@@ -95,7 +95,7 @@ type Ferry struct {
 	rowCopyCompleteCh chan struct{}
 }
 
-func (f *Ferry) newDataIterator() (*DataIterator, error) {
+func (f *Ferry) newDataIterator(resumingFromKnownState bool) (*DataIterator, error) {
 	dataIterator := &DataIterator{
 		DB:          f.SourceDB,
 		Concurrency: f.Config.DataIterationConcurrency,
@@ -108,7 +108,8 @@ func (f *Ferry) newDataIterator() (*DataIterator, error) {
 			BatchSize:   f.Config.DataIterationBatchSize,
 			ReadRetries: f.Config.DBReadRetries,
 		},
-		StateTracker: f.StateTracker,
+		StateTracker:           f.StateTracker,
+		ResumingFromKnownState: resumingFromKnownState,
 	}
 
 	if f.CopyFilter != nil {
@@ -135,7 +136,8 @@ func (f *Ferry) Initialize() (err error) {
 	// dumping states due to an abort.
 	siddontanglog.SetDefaultLogger(siddontanglog.NewDefault(SiddontangLogNullHandler{}))
 
-	// Connect to the database
+	// Connect to the source and target databases and check the validity
+	// of the connections
 	f.SourceDB, err = f.Source.SqlDB(f.logger.WithField("dbname", "source"))
 	if err != nil {
 		f.logger.WithError(err).Error("failed to connect to source database")
@@ -166,6 +168,9 @@ func (f *Ferry) Initialize() (err error) {
 		return err
 	}
 
+	// Check if we're running from a replica or not and sanity check
+	// the configurations given to Ghostferry as well as the configurations
+	// of the MySQL databases.
 	if f.WaitUntilReplicaIsCaughtUpToMaster != nil {
 		f.WaitUntilReplicaIsCaughtUpToMaster.ReplicaDB = f.SourceDB
 
@@ -214,6 +219,7 @@ func (f *Ferry) Initialize() (err error) {
 		}
 	}
 
+	// Initializing the necessary components of Ghostferry.
 	if f.ErrorHandler == nil {
 		f.ErrorHandler = &PanicErrorHandler{
 			Ferry: f,
@@ -224,14 +230,17 @@ func (f *Ferry) Initialize() (err error) {
 		f.Throttler = &PauserThrottler{}
 	}
 
-	f.StateTracker = NewStateTracker(f.DataIterationConcurrency*10, nil)
+	f.StateTracker = NewStateTracker(f.DataIterationConcurrency*10, f.StateToResumeFrom)
+
+	resumingFromKnownState := f.StateToResumeFrom != nil
 
 	f.BinlogStreamer = &BinlogStreamer{
-		Db:           f.SourceDB,
-		Config:       f.Config,
-		ErrorHandler: f.ErrorHandler,
-		Filter:       f.CopyFilter,
-		StateTracker: f.StateTracker,
+		Db:                     f.SourceDB,
+		Config:                 f.Config,
+		ErrorHandler:           f.ErrorHandler,
+		Filter:                 f.CopyFilter,
+		StateTracker:           f.StateTracker,
+		ResumingFromKnownState: resumingFromKnownState,
 	}
 	err = f.BinlogStreamer.Initialize()
 	if err != nil {
@@ -255,7 +264,7 @@ func (f *Ferry) Initialize() (err error) {
 		return err
 	}
 
-	f.DataIterator, err = f.newDataIterator()
+	f.DataIterator, err = f.newDataIterator(resumingFromKnownState)
 	if err != nil {
 		return err
 	}
@@ -303,11 +312,15 @@ func (f *Ferry) Start() error {
 	// in order to determine the PrimaryKey of each table as well as finding
 	// which value in the binlog event correspond to which field in the
 	// table.
-	metrics.Measure("LoadTables", nil, 1.0, func() {
-		f.Tables, err = LoadTables(f.SourceDB, f.TableFilter)
-	})
-	if err != nil {
-		return err
+	if f.StateToResumeFrom != nil {
+		f.Tables = f.StateToResumeFrom.LastKnownTableSchemaCache
+	} else {
+		metrics.Measure("LoadTables", nil, 1.0, func() {
+			f.Tables, err = LoadTables(f.SourceDB, f.TableFilter)
+		})
+		if err != nil {
+			return err
+		}
 	}
 
 	// TODO(pushrax): handle changes to schema during copying and clean this up.
@@ -383,19 +396,27 @@ func (f *Ferry) Run() {
 	supportingServicesWg.Wait()
 }
 
-func (f *Ferry) RunStandaloneDataCopy(tables []*schema.Table) error {
+func (f *Ferry) RunOnlyDataCopyForTables(tables []*schema.Table) error {
 	if len(tables) == 0 {
 		return nil
 	}
 
-	dataIterator, err := f.newDataIterator()
+	dataIterator, err := f.newDataIterator(false)
 	if err != nil {
 		return err
 	}
 
+	// HACK:
+	// This process is not interruptible, so we can override the previous
+	// StateTracker for this instance only.
+	// However, if the PanicErrorHandler fires while running this method, we will
+	// get an error dump even though we should not get one.
+	// TODO: refactor this to make it better
+	dataIterator.StateTracker = NewStateTracker(f.DataIterationConcurrency*10, nil)
+
 	dataIterator.Tables = tables
 	dataIterator.AddBatchListener(f.BatchWriter.WriteRowBatch)
-	f.logger.WithField("tables", tables).Info("starting standalone table copy")
+	f.logger.WithField("tables", tables).Info("starting delta table copy in cutover")
 
 	dataIterator.Run()
 

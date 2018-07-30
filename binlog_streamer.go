@@ -16,11 +16,12 @@ import (
 const caughtUpThreshold = 10 * time.Second
 
 type BinlogStreamer struct {
-	Db           *sql.DB
-	Config       *Config
-	ErrorHandler ErrorHandler
-	Filter       CopyFilter
-	StateTracker *StateTracker
+	Db                     *sql.DB
+	Config                 *Config
+	ErrorHandler           ErrorHandler
+	Filter                 CopyFilter
+	StateTracker           *StateTracker
+	ResumingFromKnownState bool
 
 	TableSchema TableSchemaCache
 
@@ -87,13 +88,18 @@ func (s *BinlogStreamer) ConnectBinlogStreamerToMysql() error {
 		return err
 	}
 
-	s.logger.Info("reading current binlog position")
-	s.lastStreamedBinlogPosition, err = ShowMasterStatusBinlogPosition(s.Db)
-	if err != nil {
-		s.logger.WithError(err).Error("failed to read current binlog position")
-		return err
+	if s.ResumingFromKnownState {
+		s.logger.Info("resuming binlog streaming from known coordinate")
+		s.lastStreamedBinlogPosition = s.StateTracker.lastStreamedBinlogPosition
+	} else {
+		s.logger.Info("reading current binlog position")
+		s.lastStreamedBinlogPosition, err = ShowMasterStatusBinlogPosition(s.Db)
+		if err != nil {
+			s.logger.WithError(err).Error("failed to read current binlog position")
+			return err
+		}
+		s.StateTracker.UpdateLastStreamedBinlogPosition(s.lastStreamedBinlogPosition)
 	}
-	s.StateTracker.UpdateLastStreamedBinlogPosition(s.lastStreamedBinlogPosition)
 
 	s.logger.WithFields(logrus.Fields{
 		"file": s.lastStreamedBinlogPosition.Name,
