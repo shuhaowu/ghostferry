@@ -5,12 +5,16 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
-	siddongtangmysql "github.com/siddontang/go-mysql/mysql"
+	siddontanglog "github.com/siddontang/go-log/log"
+	siddontangmysql "github.com/siddontang/go-mysql/mysql"
 	"github.com/siddontang/go-mysql/replication"
 	"github.com/siddontang/go-mysql/schema"
 	"github.com/sirupsen/logrus"
@@ -45,6 +49,20 @@ func MaskedDSN(c *mysql.Config) string {
 	}()
 
 	return c.FormatDSN()
+}
+
+// This hacked class is required until https://github.com/siddontang/go-log/pull/2 is merged.
+// Alternatively, we can remove it if siddontanglog/go-log is no longer used by
+// siddontang/go-mysql.
+type SiddontangLogNullHandler struct {
+}
+
+func (h SiddontangLogNullHandler) Write(b []byte) (n int, err error) {
+	return len(b), nil
+}
+
+func (h SiddontangLogNullHandler) Close() error {
+	return nil
 }
 
 type Ferry struct {
@@ -111,6 +129,12 @@ func (f *Ferry) Initialize() (err error) {
 
 	f.logger.Infof("hello world from %s", VersionString)
 
+	// Suppress siddontang/go-mysql logging as we already log the equivalents.
+	// It also by defaults logs to stdout, which is different from Ghostferry
+	// logging, which all goes to stderr. stdout in Ghostferry is reserved for
+	// dumping states due to an abort.
+	siddontanglog.SetDefaultLogger(siddontanglog.NewDefault(SiddontangLogNullHandler{}))
+
 	// Connect to the database
 	f.SourceDB, err = f.Source.SqlDB(f.logger.WithField("dbname", "source"))
 	if err != nil {
@@ -157,7 +181,7 @@ func (f *Ferry) Initialize() (err error) {
 			return err
 		}
 
-		var zeroPosition siddongtangmysql.Position
+		var zeroPosition siddontangmysql.Position
 		// This checks that the query checking for the lag works.
 		_, err = f.WaitUntilReplicaIsCaughtUpToMaster.IsCaughtUp(zeroPosition, 1)
 		if err != nil {
@@ -308,11 +332,26 @@ func (f *Ferry) Run() {
 	}
 
 	supportingServicesWg := &sync.WaitGroup{}
-	supportingServicesWg.Add(1)
+	supportingServicesWg.Add(2)
 
 	go func() {
 		defer supportingServicesWg.Done()
 		handleError("throttler", f.Throttler.Run(ctx))
+	}()
+
+	go func() {
+		defer supportingServicesWg.Done()
+
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
+
+		select {
+		case <-ctx.Done():
+			f.logger.Debug("shutting down signal monitoring goroutine")
+			return
+		case s := <-c:
+			f.ErrorHandler.Fatal("user", fmt.Errorf("signal received: %v", s.String()))
+		}
 	}()
 
 	coreServicesWg := &sync.WaitGroup{}
