@@ -1,6 +1,7 @@
 package test
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -69,7 +70,7 @@ func (this *DataIteratorTestSuite) TestNoEventsForEmptyTable() {
 	_, err = this.Ferry.SourceDB.Query(fmt.Sprintf("DELETE FROM `%s`.`%s`", testhelpers.TestSchemaName, testhelpers.TestCompressedTable1Name))
 	this.Require().Nil(err)
 
-	this.di.Run()
+	this.di.Run(context.Background())
 
 	this.Require().Equal(0, len(this.receivedRows))
 	this.Require().Equal(
@@ -122,7 +123,7 @@ func (this *DataIteratorTestSuite) TestExistingRowsAreIterated() {
 	this.Require().Equal(0, len(this.receivedRows[testhelpers.TestTable1Name]))
 	this.Require().Equal(0, len(this.receivedRows[testhelpers.TestCompressedTable1Name]))
 
-	this.di.Run()
+	this.di.Run(context.Background())
 
 	this.Require().Equal(5, len(this.receivedRows[testhelpers.TestTable1Name]))
 	this.Require().Equal(5, len(this.receivedRows[testhelpers.TestCompressedTable1Name]))
@@ -154,7 +155,7 @@ func (this *DataIteratorTestSuite) TestDoneListenerGetsNotifiedWhenDone() {
 		return nil
 	})
 
-	this.di.Run()
+	this.di.Run(context.Background())
 
 	this.Require().True(wasNotified)
 }
