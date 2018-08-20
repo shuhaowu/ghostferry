@@ -1,6 +1,7 @@
 package copydb
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -137,7 +138,7 @@ func (this *CopydbFerry) Run() {
 	copyWG.Add(1)
 	go func() {
 		defer copyWG.Done()
-		this.Ferry.Run()
+		this.Ferry.Run(context.Background())
 	}()
 
 	// If AutomaticCutover == false, it will pause below the following line

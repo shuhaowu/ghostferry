@@ -1,6 +1,7 @@
 package testhelpers
 
 import (
+	"context"
 	"os"
 	"strconv"
 
@@ -110,8 +111,8 @@ func (this *TestFerry) Start() error {
 	return nil
 }
 
-func (this *TestFerry) Run() {
-	this.Ferry.Run()
+func (this *TestFerry) Run(ctx context.Context) {
+	this.Ferry.Run(ctx)
 }
 
 func getPortFromEnv(env string, defaultVal uint64) uint64 {

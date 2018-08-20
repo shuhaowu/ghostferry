@@ -1,6 +1,7 @@
 package ghostferry
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -29,10 +30,16 @@ func (b *BinlogWriter) Initialize() error {
 	return nil
 }
 
-func (b *BinlogWriter) Run() {
+func (b *BinlogWriter) Run(ctx context.Context) {
 	batch := make([]DMLEvent, 0, b.BatchSize)
 	for {
-		firstEvent := <-b.binlogEventBuffer
+		var firstEvent DMLEvent
+		select {
+		case <-ctx.Done():
+			b.logger.Info("shutdown received, terminating goroutine abruptly")
+			return
+		case firstEvent = <-b.binlogEventBuffer:
+		}
 		if firstEvent == nil {
 			// Channel is closed, no more events to write
 			break
@@ -54,9 +61,15 @@ func (b *BinlogWriter) Run() {
 			}
 		}
 
-		err := WithRetries(b.WriteRetries, 0, b.logger, "write events to target", func() error {
+		err := WithRetriesContext(ctx, b.WriteRetries, 0, b.logger, "write events to target", func() error {
 			return b.writeEvents(batch)
 		})
+
+		if err == context.Canceled {
+			b.logger.Info("shutdown received, terminating goroutine abruptly")
+			return
+		}
+
 		if err != nil {
 			b.ErrorHandler.Fatal("binlog_writer", err)
 			return

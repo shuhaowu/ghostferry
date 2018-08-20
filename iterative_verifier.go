@@ -2,6 +2,7 @@ package ghostferry
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -401,7 +402,7 @@ func (v *IterativeVerifier) iterateTableFingerprints(table *schema.Table, mismat
 
 	// It only needs the PKs, not the entire row.
 	cursor.ColumnsToSelect = []string{fmt.Sprintf("`%s`", table.GetPKColumn(0).Name)}
-	return cursor.Each(func(batch *RowBatch) error {
+	return cursor.Each(context.Background(), func(batch *RowBatch) error {
 		metrics.Count("RowEvent", int64(batch.Size()), []MetricTag{
 			MetricTag{"table", table.Name},
 			MetricTag{"source", "iterative_verifier_before_cutover"},

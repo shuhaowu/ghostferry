@@ -102,7 +102,7 @@ func (s *BinlogStreamer) ConnectBinlogStreamerToMysql() error {
 	return nil
 }
 
-func (s *BinlogStreamer) Run() {
+func (s *BinlogStreamer) Run(ctx context.Context) {
 	defer func() {
 		s.logger.Info("exiting binlog streamer")
 		s.binlogSyncer.Close()
@@ -114,10 +114,10 @@ func (s *BinlogStreamer) Run() {
 		var ev *replication.BinlogEvent
 		var timedOut bool
 
-		err := WithRetries(5, 0, s.logger, "get binlog event", func() (er error) {
-			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		err := WithRetriesContext(ctx, 5, 0, s.logger, "get binlog event", func() (er error) {
+			timeoutCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 			defer cancel()
-			ev, er = s.binlogStreamer.GetEvent(ctx)
+			ev, er = s.binlogStreamer.GetEvent(timeoutCtx)
 
 			if er == context.DeadlineExceeded {
 				timedOut = true
@@ -126,6 +126,11 @@ func (s *BinlogStreamer) Run() {
 
 			return er
 		})
+
+		if err == context.Canceled {
+			s.logger.Info("shutdown received, terminating goroutine abruptly")
+			return
+		}
 
 		if err != nil {
 			s.ErrorHandler.Fatal("binlog_streamer", err)

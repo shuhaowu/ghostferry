@@ -1,6 +1,7 @@
 package testhelpers
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -70,7 +71,7 @@ func (this *IntegrationTestCase) StartFerryAndDataWriter() {
 	this.wg.Add(1)
 	go func() {
 		defer this.wg.Done()
-		this.Ferry.Run()
+		this.Ferry.Run(context.Background())
 	}()
 }
 

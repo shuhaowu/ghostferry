@@ -293,11 +293,11 @@ func (f *Ferry) Start() error {
 
 // Spawns the background tasks that actually perform the run.
 // Wait for the background tasks to finish.
-func (f *Ferry) Run() {
+func (f *Ferry) Run(ctx context.Context) {
 	f.logger.Info("starting ferry run")
 	f.OverallState = StateCopying
 
-	ctx, shutdown := context.WithCancel(context.Background())
+	throttlerCtx, throttlerShutdown := context.WithCancel(ctx)
 
 	handleError := func(name string, err error) {
 		if err != nil && err != context.Canceled {
@@ -310,7 +310,7 @@ func (f *Ferry) Run() {
 
 	go func() {
 		defer supportingServicesWg.Done()
-		handleError("throttler", f.Throttler.Run(ctx))
+		handleError("throttler", f.Throttler.Run(throttlerCtx))
 	}()
 
 	coreServicesWg := &sync.WaitGroup{}
@@ -318,19 +318,19 @@ func (f *Ferry) Run() {
 
 	go func() {
 		defer coreServicesWg.Done()
+		f.BinlogWriter.Run(ctx)
+	}()
 
-		f.BinlogStreamer.Run()
+	go func() {
+		defer coreServicesWg.Done()
+
+		f.BinlogStreamer.Run(ctx)
 		f.BinlogWriter.Stop()
 	}()
 
 	go func() {
 		defer coreServicesWg.Done()
-		f.BinlogWriter.Run()
-	}()
-
-	go func() {
-		defer coreServicesWg.Done()
-		f.DataIterator.Run()
+		f.DataIterator.Run(ctx)
 	}()
 
 	coreServicesWg.Wait()
@@ -338,7 +338,7 @@ func (f *Ferry) Run() {
 	f.OverallState = StateDone
 	f.DoneTime = time.Now()
 
-	shutdown()
+	throttlerShutdown()
 	supportingServicesWg.Wait()
 }
 
@@ -356,7 +356,7 @@ func (f *Ferry) RunStandaloneDataCopy(tables []*schema.Table) error {
 	dataIterator.AddBatchListener(f.BatchWriter.WriteRowBatch)
 	f.logger.WithField("tables", tables).Info("starting standalone table copy")
 
-	dataIterator.Run()
+	dataIterator.Run(context.Background())
 
 	return nil
 }

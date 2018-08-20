@@ -1,6 +1,7 @@
 package sharding
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -172,7 +173,7 @@ func (r *ShardingFerry) Run() {
 	copyWG.Add(1)
 	go func() {
 		defer copyWG.Done()
-		r.Ferry.Run()
+		r.Ferry.Run(context.Background())
 	}()
 
 	r.Ferry.WaitUntilRowCopyIsComplete()
