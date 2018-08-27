@@ -2,6 +2,7 @@ package ghostferry
 
 import (
 	"container/ring"
+	"context"
 	"database/sql"
 	"sync"
 	"time"
@@ -160,7 +161,7 @@ func (d *DataIterator) Initialize() error {
 	return nil
 }
 
-func (d *DataIterator) Run() {
+func (d *DataIterator) Run(ctx context.Context) {
 	d.logger.WithField("tablesCount", len(d.Tables)).Info("starting data iterator run")
 
 	tablesWithData, emptyTables, err := MaxPrimaryKeys(d.DB, d.Tables, d.logger)
@@ -227,8 +228,20 @@ func (d *DataIterator) Run() {
 					logger.Debugf("updated last successful PK to %d", pkpos)
 					d.CurrentState.UpdateLastSuccessfulPK(table.String(), pkpos)
 
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					default:
+						// continue to next iteration
+					}
+
 					return nil
 				})
+
+				if err == context.Canceled {
+					logger.Warn("shutdown received, interrupting goroutine abruptly")
+					return
+				}
 
 				if err != nil {
 					logger.WithError(err).Error("failed to iterate table")
@@ -242,7 +255,15 @@ func (d *DataIterator) Run() {
 	}
 
 	for table, _ := range tablesWithData {
-		tablesQueue <- table
+		select {
+		case tablesQueue <- table:
+			// skip
+		case <-ctx.Done():
+			d.logger.Warn("shutdown received, shutting down tables queue and quitting")
+			close(tablesQueue)
+			wg.Wait()
+			return
+		}
 	}
 
 	d.logger.Info("done queueing tables to be iterated, closing table channel")

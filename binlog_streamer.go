@@ -102,7 +102,7 @@ func (s *BinlogStreamer) ConnectBinlogStreamerToMysql() error {
 	return nil
 }
 
-func (s *BinlogStreamer) Run() {
+func (s *BinlogStreamer) Run(ctx context.Context) {
 	defer func() {
 		s.logger.Info("exiting binlog streamer")
 		s.binlogSyncer.Close()
@@ -114,10 +114,10 @@ func (s *BinlogStreamer) Run() {
 		var ev *replication.BinlogEvent
 		var timedOut bool
 
-		err := WithRetries(5, 0, s.logger, "get binlog event", func() (er error) {
-			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-			defer cancel()
-			ev, er = s.binlogStreamer.GetEvent(ctx)
+		err := WithRetriesContext(ctx, 5, 0, s.logger, "get binlog event", func() (er error) {
+			timeoutCtx, timeoutCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+			defer timeoutCancel()
+			ev, er = s.binlogStreamer.GetEvent(timeoutCtx)
 
 			if er == context.DeadlineExceeded {
 				timedOut = true
@@ -126,6 +126,11 @@ func (s *BinlogStreamer) Run() {
 
 			return er
 		})
+
+		if err == context.Canceled {
+			s.logger.Warn("shutdown received, interrupting goroutine abruptly")
+			return
+		}
 
 		if err != nil {
 			s.ErrorHandler.Fatal("binlog_streamer", err)
@@ -183,25 +188,31 @@ func (s *BinlogStreamer) IsAlmostCaughtUp() bool {
 	return time.Now().Sub(s.lastProcessedEventTime) < caughtUpThreshold
 }
 
-func (s *BinlogStreamer) FlushAndStop() {
+func (s *BinlogStreamer) FlushAndStop(ctx context.Context) error {
 	s.logger.Info("requesting binlog streamer to stop")
 	// Must first read the binlog position before requesting stop
 	// Otherwise there is a race condition where the stopRequested is
 	// set to True but the TargetPosition is nil, which would cause
 	// the BinlogStreamer to immediately exit, as it thinks that it has
 	// passed the initial target position.
-	err := WithRetries(100, 600*time.Millisecond, s.logger, "read current binlog position", func() error {
+	err := WithRetriesContext(ctx, 100, 600*time.Millisecond, s.logger, "read current binlog position", func() error {
 		var err error
 		s.targetBinlogPosition, err = ShowMasterStatusBinlogPosition(s.Db)
 		return err
 	})
 
+	if err == context.Canceled {
+		return err
+	}
+
 	if err != nil {
-		s.ErrorHandler.Fatal("binlog_streamer", err)
+		s.ErrorHandler.ReportError("binlog_streamer", err)
+		return err
 	}
 	s.logger.WithField("target_position", s.targetBinlogPosition).Info("current stop binlog position was recorded")
 
 	s.stopRequested = true
+	return nil
 }
 
 func (s *BinlogStreamer) updateLastStreamedPosAndTime(ev *replication.BinlogEvent) {

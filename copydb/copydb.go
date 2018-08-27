@@ -1,9 +1,13 @@
 package copydb
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Shopify/ghostferry"
@@ -129,31 +133,64 @@ func (this *CopydbFerry) runIterativeVerifierAfterRowCopy() error {
 }
 
 func (this *CopydbFerry) Run() {
-	serverWG := &sync.WaitGroup{}
-	serverWG.Add(1)
-	go this.controlServer.Run(serverWG)
+	ctx, shutdown := context.WithCancel(context.Background())
+
+	supportingServicesWg := &sync.WaitGroup{}
+	supportingServicesWg.Add(2)
+	go this.controlServer.Run(supportingServicesWg)
+
+	go func() {
+		defer supportingServicesWg.Done()
+
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
+
+		select {
+		case <-ctx.Done():
+		case s := <-c:
+			logrus.WithField("signal", s.String()).Warn("shutdown signal received")
+			shutdown()
+			this.ShutdownControlServer()
+		}
+	}()
 
 	copyWG := &sync.WaitGroup{}
 	copyWG.Add(1)
 	go func() {
 		defer copyWG.Done()
-		this.Ferry.Run()
+		this.Ferry.Run(ctx)
 	}()
 
 	// If AutomaticCutover == false, it will pause below the following line
-	this.Ferry.WaitUntilRowCopyIsComplete()
+	err := this.Ferry.WaitUntilRowCopyIsComplete(ctx)
+	if err == context.Canceled {
+		goto shutdownFerry
+	} else if err != nil {
+		panic(err)
+	}
 
 	// This waits until we're pretty close in the binlog before making the
 	// source readonly. This is to avoid excessive downtime caused by the
 	// binlog streamer catching up.
-	this.Ferry.WaitUntilBinlogStreamerCatchesUp()
+	err = this.Ferry.WaitUntilBinlogStreamerCatchesUp(ctx)
+	if err == context.Canceled {
+		goto shutdownFerry
+	} else if err != nil {
+		panic(err)
+	}
 
 	// This is when the source database should be set as read only, whether it
 	// is done in application level or the database level.
 	// Must ensure that all transactions are flushed to the binlog before
 	// proceeding.
-	this.Ferry.FlushBinlogAndStopStreaming()
+	err = this.Ferry.FlushBinlogAndStopStreaming(ctx)
+	if err == context.Canceled {
+		goto shutdownFerry
+	} else if err != nil {
+		panic(err)
+	}
 
+shutdownFerry:
 	// After waiting for the binlog streamer to stop, the source and the target
 	// should be identical.
 	copyWG.Wait()
@@ -164,7 +201,7 @@ func (this *CopydbFerry) Run() {
 	// using the target database.
 
 	// Work is done, the process will run the web server until killed.
-	serverWG.Wait()
+	supportingServicesWg.Wait()
 }
 
 func (this *CopydbFerry) ShutdownControlServer() error {
