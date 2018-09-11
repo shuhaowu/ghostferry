@@ -13,11 +13,12 @@ VERSION_STR     := $(VERSION)+$(DATETIME)+$(COMMIT)
 LDFLAGS         += -X github.com/Shopify/ghostferry.VersionString=$(VERSION_STR)
 
 # Paths
-GOBIN           := $(GOPATH)/bin
-BUILD_DIR       := build
-DEB_PREFIX      := $(BUILD_DIR)/debian
-SHARE_DIR       := usr/share/ghostferry
-BIN_DIR         := usr/bin
+GOBIN              := $(GOPATH)/bin
+BUILD_DIR          := build
+DEB_PREFIX         := $(BUILD_DIR)/debian
+SHARE_DIR          := usr/share/ghostferry
+BIN_DIR            := usr/bin
+RB_INTEGRATION_DIR := test/integration
 
 # Targets
 PROJECTS        := copydb sharding
@@ -52,6 +53,7 @@ $(GOBIN):
 test:
 	@go version
 	go test ./test ./copydb/test ./sharding/test -p 1 -v
+	cd $(RB_INTEGRATION_DIR) && bundle install && bundle exec ruby test.rb
 
 clean:
 	rm -rf build
