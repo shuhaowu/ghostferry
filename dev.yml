@@ -4,6 +4,9 @@ up:
   - homebrew:
     - glide
     - mysql
+  - ruby: 2.5.1
+  - bundler:
+      gemfile: test/integration/Gemfile
   - go:
       version: 1.10.3
   - custom:
