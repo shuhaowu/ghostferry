@@ -35,19 +35,22 @@ module GhostferryIntegration
       end
     end
 
-    def start
-      @number_of_writers.times do
+    def start(&on_write)
+      @number_of_writers.times do |i|
         @threads << Thread.new do
+          @logger.info("starting data writer thread #{i}")
+
           connection = Mysql2::Client.new(@db_config)
           until @stop_requested do
-            write_data(connection)
+            write_data(connection, &on_write)
           end
+
+          @logger.info("stopped data writer thread #{i}")
         end
       end
     end
 
     def stop
-      @logger.info("DataWriter stop requested")
       @stop_requested = true
     end
 
@@ -57,22 +60,29 @@ module GhostferryIntegration
       end
     end
 
-    def write_data(connection)
+    def write_data(connection, &on_write)
       r = rand
 
       if r >= @insert_probability[0] && r < @insert_probability[1]
-        insert_data(connection)
+        id = insert_data(connection)
+        op = "INSERT"
       elsif r >= @update_probability[0] && r < @update_probability[1]
-        update_data(connection)
+        id = update_data(connection)
+        op = "UPDATE"
       elsif r >= @delete_probability[0] && r < @delete_probability[1]
-        delete_data(connection)
+        id = delete_data(connection)
+        op = "DELETE"
       end
+
+      @logger.debug("writing data: #{op} #{id}")
+      on_write.call(op, id) unless on_write.nil?
     end
 
     def insert_data(connection)
       table = @tables.sample
       insert_statement = connection.prepare("INSERT INTO #{table} (id, data) VALUES (?, ?)")
       insert_statement.execute(nil, GhostferryIntegration.rand_data)
+      connection.last_id
     end
 
     def update_data(connection)
@@ -80,6 +90,7 @@ module GhostferryIntegration
       id = random_real_id(connection, table)
       update_statement = connection.prepare("UPDATE #{table} SET data = ? WHERE id >= ? LIMIT 1")
       update_statement.execute(GhostferryIntegration.rand_data, id)
+      id
     end
 
     def delete_data(connection)
@@ -87,6 +98,7 @@ module GhostferryIntegration
       id = random_real_id(connection, table)
       delete_statement = connection.prepare("DELETE FROM #{table} WHERE id >= ? LIMIT 1")
       delete_statement.execute(id)
+      id
     end
 
     def random_real_id(connection, table)

@@ -1,7 +1,5 @@
 require "thread"
 
-# Thread.abort_on_exception = true
-
 module GhostferryIntegration
   # For random data generation
   ALPHANUMERICS = ("0".."9").to_a + ("a".."z").to_a + ("A".."Z").to_a

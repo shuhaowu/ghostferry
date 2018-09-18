@@ -1,3 +1,4 @@
+require "json"
 require "logger"
 require "open3"
 require "socket"
@@ -5,6 +6,9 @@ require "thread"
 require "tmpdir"
 
 module GhostferryIntegration
+  class GhostferryExitFailure < StandardError
+  end
+
   class Ghostferry
     # Manages compiling, running, and communicating with Ghostferry.
     #
@@ -36,7 +40,7 @@ module GhostferryIntegration
       AFTER_BINLOG_APPLY = "AFTER_BINLOG_APPLY"
     end
 
-    attr_reader :stdout, :stderr, :subprocess_exit_status
+    attr_reader :stdout, :stderr, :exit_status, :pid
 
     def initialize(main_path, logger: nil, message_timeout: 30)
       @main_path = main_path
@@ -66,10 +70,10 @@ module GhostferryIntegration
       @server = nil
       @server_started_notifier = Queue.new
 
-      @subprocess_pid = 0
-      @subprocess_exit_status = nil
-      @subprocess_stdout = []
-      @subprocess_stderr = []
+      @pid = 0
+      @exit_status = nil
+      @stdout = []
+      @stderr = []
     end
 
     def on_status(status, &block)
@@ -92,13 +96,14 @@ module GhostferryIntegration
 
     def start_server
       @server_thread = Thread.new do
+        @logger.info("starting integration test server")
         @server = UNIXServer.new(SOCKET_PATH)
         @server_started_notifier.push(true)
 
         reads = [@server]
         last_message_time = Time.now
 
-        while (!@stop_requested && @subprocess_exit_status.nil?) do
+        while (!@stop_requested && @exit_status.nil?) do
           ready = IO.select(reads, nil, nil, 0.2)
 
           if ready.nil?
@@ -140,18 +145,24 @@ module GhostferryIntegration
         end
 
         @server.close
-      end
+        @logger.info("server thread stopped")
+     end
     end
 
-    def start_ghostferry
+    def start_ghostferry(resuming_state = nil)
       @subprocess_thread = Thread.new do
+        Thread.current.report_on_exception = false
+
         environment = {
           ENV_KEY_SOCKET_PATH => SOCKET_PATH
         }
 
         @logger.info("starting ghostferry test binary #{@compiled_binary_path}")
-        Open3.popen3(environment, @compiled_binary_path) do |_, stdout, stderr, wait_thr|
-          @subprocess_pid = wait_thr.pid
+        Open3.popen3(environment, @compiled_binary_path) do |stdin, stdout, stderr, wait_thr|
+          stdin.puts(resuming_state) unless resuming_state.nil?
+          stdin.close
+
+          @pid = wait_thr.pid
 
           reads = [stdout, stderr]
           until reads.empty? do
@@ -165,23 +176,23 @@ module GhostferryIntegration
               end
 
               if reader == stdout
-                @subprocess_stdout << line
+                @stdout << line
                 @logger.debug("stdout: #{line}")
               elsif reader == stderr
-                @subprocess_stderr << line
+                @stderr << line
                 @logger.debug("stderr: #{line}")
               end
             end
           end
 
-          @subprocess_exit_status = wait_thr.value
-          if @subprocess_exit_status.exitstatus != 0
-            raise "ghostferry test binary returned non-zero status: #{@subprocess_exit_status}"
-          end
-          @subprocess_pid = 0
+          @exit_status = wait_thr.value
+          @pid = 0
         end
 
-        @logger.info("ghostferry test binary exitted: #{@subprocess_exit_status}")
+        @logger.info("ghostferry test binary exitted: #{@exit_status}")
+        if @exit_status.exitstatus != 0
+          raise GhostferryExitFailure, "ghostferry test binary returned non-zero status: #{@exit_status}"
+        end
       end
     end
 
@@ -191,8 +202,10 @@ module GhostferryIntegration
     end
 
     def wait_until_ghostferry_run_is_complete
-      @subprocess_thread.join
-      @server_thread.join
+      # Server thread should always join first because the loop within it
+      # should exit if @exit_status != nil.
+      @server_thread.join if @server_thread
+      @subprocess_thread.join if @subprocess_thread
     end
 
     def remove_socket
@@ -203,21 +216,41 @@ module GhostferryIntegration
       FileUtils.remove_entry(@tempdir) unless @tempdir.nil?
     end
 
-    def stop
-      @stop_requested = true
-      Process.kill("KILL", @subprocess_pid) if @subprocess_pid
-      wait_until_ghostferry_run_is_complete
+    def send_signal(signal)
+      Process.kill(signal, @pid) if @pid != 0
     end
 
-    def run
+    def stop_and_cleanup
+      @stop_requested = true
+      send_signal("KILL")
+      begin
+        wait_until_ghostferry_run_is_complete
+      rescue GhostferryExitFailure
+        # ignore
+      end
+      reset_state
+    end
+
+    def run(resuming_state = nil)
+      resuming_state = JSON.generate(resuming_state) if resuming_state.is_a?(Hash)
+
       compile_binary
       start_server
       wait_until_server_has_started
-      start_ghostferry
+      start_ghostferry(resuming_state)
       wait_until_ghostferry_run_is_complete
     ensure
       remove_socket
-      reset_state
+    end
+
+    # TODO: Need to stop the integration server
+    def run_expecting_interrupt(resuming_state = nil)
+      run(resuming_state)
+    rescue GhostferryExitFailure
+      dumped_state = @stdout.join("")
+      JSON.parse(dumped_state)
+    else
+      raise "Ghostferry did not get interrupted"
     end
   end
 end

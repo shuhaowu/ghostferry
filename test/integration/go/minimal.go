@@ -1,6 +1,10 @@
 package main
 
 import (
+	"encoding/json"
+	"io/ioutil"
+	"os"
+
 	"github.com/Shopify/ghostferry"
 	"github.com/Shopify/ghostferry/test/integration/go/integrationferry"
 	"github.com/Shopify/ghostferry/testhelpers"
@@ -39,9 +43,24 @@ func main() {
 			DbsFunc:    testhelpers.DbApplicabilityFilter([]string{"gftest"}),
 			TablesFunc: nil,
 		},
+
+		DumpStateToStdoutOnSignal: true,
 	}
 
-	err := config.ValidateConfig()
+	resumeStateJSON, err := ioutil.ReadAll(os.Stdin)
+	if err != nil {
+		panic(err)
+	}
+
+	if len(resumeStateJSON) > 0 {
+		config.StateToResumeFrom = &ghostferry.SerializableState{}
+		err = json.Unmarshal(resumeStateJSON, config.StateToResumeFrom)
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	err = config.ValidateConfig()
 	if err != nil {
 		panic(err)
 	}
