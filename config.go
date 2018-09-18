@@ -245,6 +245,11 @@ type Config struct {
 	// Config for the ControlServer
 	ServerBindAddr string
 	WebBasedir     string
+
+	// The state to resume from as dumped by the PanicErrorHandler.
+	// If this is null, a new Ghostferry run will be started. Otherwise, the
+	// reconciliation process will start and Ghostferry will resume after that.
+	StateToResumeFrom *SerializableState
 }
 
 func (c *Config) ValidateConfig() error {

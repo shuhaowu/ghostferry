@@ -20,7 +20,8 @@ type BinlogStreamer struct {
 	ErrorHandler ErrorHandler
 	Filter       CopyFilter
 
-	TableSchema TableSchemaCache
+	TableSchema             TableSchemaCache
+	StartFromBinlogPosition mysql.Position
 
 	binlogSyncer               *replication.BinlogSyncer
 	binlogStreamer             *replication.BinlogStreamer
@@ -81,11 +82,16 @@ func (s *BinlogStreamer) ConnectBinlogStreamerToMysql() error {
 		return err
 	}
 
-	s.logger.Info("reading current binlog position")
-	s.lastStreamedBinlogPosition, err = ShowMasterStatusBinlogPosition(s.Db)
-	if err != nil {
-		s.logger.WithError(err).Error("failed to read current binlog position")
-		return err
+	if s.StartFromBinlogPosition.Compare(mysql.Position{}) != 0 {
+		s.logger.Info("resuming binlog streaming from known coordinate")
+		s.lastStreamedBinlogPosition = s.StartFromBinlogPosition
+	} else {
+		s.logger.Info("reading current binlog position")
+		s.lastStreamedBinlogPosition, err = ShowMasterStatusBinlogPosition(s.Db)
+		if err != nil {
+			s.logger.WithError(err).Error("failed to read current binlog position")
+			return err
+		}
 	}
 
 	s.logger.WithFields(logrus.Fields{

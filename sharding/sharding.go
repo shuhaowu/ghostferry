@@ -261,7 +261,7 @@ func (r *ShardingFerry) deltaCopyJoinedTables() error {
 		}
 	}
 
-	err := r.Ferry.RunStandaloneDataCopy(tables)
+	err := r.Ferry.RunOnlyDataCopyForTables(tables)
 	if err != nil {
 		return err
 	}
@@ -321,7 +321,7 @@ func (r *ShardingFerry) copyPrimaryKeyTables() error {
 		return fmt.Errorf("expected primary key tables could not be found")
 	}
 
-	err = r.Ferry.RunStandaloneDataCopy(tables)
+	err = r.Ferry.RunOnlyDataCopyForTables(tables)
 	if err != nil {
 		return err
 	}
