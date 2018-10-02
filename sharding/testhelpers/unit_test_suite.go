@@ -102,6 +102,10 @@ func (t *ShardingUnitTestSuite) SetupTest() {
 
 	testhelpers.AddTenantID(t.Ferry.Ferry.SourceDB, sourceDbName, testhelpers.TestCompressedTable1Name, 3)
 	testhelpers.AddTenantID(t.Ferry.Ferry.TargetDB, targetDbName, testhelpers.TestCompressedTable1Name, 3)
+
+	// HACK: must rebuild table schema cache as this is done incorrectly
+	testhelpers.PanicIfError(t.Ferry.Ferry.RebuildTableSchemaCache())
+	t.Ferry.Ferry.BinlogStreamer.TableSchema = t.Ferry.Ferry.Tables
 }
 
 func (t *ShardingUnitTestSuite) TearDownTest() {

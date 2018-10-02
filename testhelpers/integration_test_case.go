@@ -48,6 +48,15 @@ func (this *IntegrationTestCase) Setup() {
 	PanicIfError(this.Ferry.Initialize())
 
 	this.callCustomAction(this.SetupAction)
+
+	// HACK: usually the SetupAction sets up the database. This means the Tables
+	// loaded during Ferry.Initialize is no longer accurate, which means we need
+	// to recache it.
+	//
+	// In the long term, we should replace all these integration tests with
+	// the ruby integration tests, which do not have this issue.
+	PanicIfError(this.Ferry.RebuildTableSchemaCache())
+	this.Ferry.BinlogStreamer.TableSchema = this.Ferry.Tables
 }
 
 func (this *IntegrationTestCase) StartFerryAndDataWriter() {
