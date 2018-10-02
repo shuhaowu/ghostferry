@@ -15,9 +15,9 @@ func TestShardedTableFilterSelectsSingleDatabase(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, []string{"shard_42"}, applicable)
 
-	applicable, err = filter.ApplicableDatabases(nil)
+	applicable, err = filter.ApplicableDatabases([]string{})
 	assert.Nil(t, err)
-	assert.Equal(t, []string{"shard_42"}, applicable)
+	assert.Equal(t, []string{}, applicable)
 }
 
 func TestShardedTableFilterRejectsIgnoredTables(t *testing.T) {

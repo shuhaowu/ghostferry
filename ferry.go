@@ -113,6 +113,7 @@ func (f *Ferry) NewBinlogStreamer() *BinlogStreamer {
 		MyServerId:   f.Config.MyServerId,
 		ErrorHandler: f.ErrorHandler,
 		Filter:       f.CopyFilter,
+		TableSchema:  f.Tables,
 	}
 }
 
@@ -289,6 +290,22 @@ func (f *Ferry) Initialize() (err error) {
 		f.StateTracker = NewStateTrackerFromSerializedState(f.DataIterationConcurrency*10, f.StateToResumeFrom)
 	}
 
+	// Loads the schema of the tables that are applicable.
+	// We need to do this at the beginning of the run as this is required
+	// in order to determine the PrimaryKey of each table as well as finding
+	// which value in the binlog event correspond to which field in the
+	// table.
+	if f.StateToResumeFrom != nil {
+		f.Tables = f.StateToResumeFrom.LastKnownTableSchemaCache
+	} else {
+		metrics.Measure("LoadTables", nil, 1.0, func() {
+			err = f.RebuildTableSchemaCache()
+		})
+		if err != nil {
+			return err
+		}
+	}
+
 	f.BinlogStreamer = f.NewBinlogStreamer()
 	f.BinlogWriter = f.NewBinlogWriter()
 	f.DataIterator = f.NewDataIterator()
@@ -296,6 +313,12 @@ func (f *Ferry) Initialize() (err error) {
 
 	f.logger.Info("ferry initialized")
 	return nil
+}
+
+func (f *Ferry) RebuildTableSchemaCache() error {
+	var err error
+	f.Tables, err = LoadTables(f.SourceDB, f.TableFilter)
+	return err
 }
 
 // Determine the binlog coordinates, table mapping for the pending
@@ -325,25 +348,6 @@ func (f *Ferry) Start() error {
 	if err != nil {
 		return err
 	}
-
-	// Loads the schema of the tables that are applicable.
-	// We need to do this at the beginning of the run as this is required
-	// in order to determine the PrimaryKey of each table as well as finding
-	// which value in the binlog event correspond to which field in the
-	// table.
-	if f.StateToResumeFrom != nil {
-		f.Tables = f.StateToResumeFrom.LastKnownTableSchemaCache
-	} else {
-		metrics.Measure("LoadTables", nil, 1.0, func() {
-			f.Tables, err = LoadTables(f.SourceDB, f.TableFilter)
-		})
-		if err != nil {
-			return err
-		}
-	}
-
-	// TODO(pushrax): handle changes to schema during copying and clean this up.
-	f.BinlogStreamer.TableSchema = f.Tables
 
 	return nil
 }

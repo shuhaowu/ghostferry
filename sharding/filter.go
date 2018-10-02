@@ -195,7 +195,13 @@ type ShardedTableFilter struct {
 }
 
 func (s *ShardedTableFilter) ApplicableDatabases(dbs []string) ([]string, error) {
-	return []string{s.SourceShard}, nil
+	for _, db := range dbs {
+		if s.SourceShard == db {
+			return []string{s.SourceShard}, nil
+		}
+	}
+
+	return []string{}, nil
 }
 
 func (s *ShardedTableFilter) ApplicableTables(tables []*schema.Table) (applicable []*schema.Table, err error) {
