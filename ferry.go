@@ -338,7 +338,6 @@ func (f *Ferry) Start() error {
 
 	// TODO(pushrax): handle changes to schema during copying and clean this up.
 	f.BinlogStreamer.TableSchema = f.Tables
-	f.DataIterator.Tables = f.Tables.AsSlice()
 
 	return nil
 }
@@ -405,7 +404,7 @@ func (f *Ferry) Run() {
 
 	go func() {
 		defer dataIteratorWg.Done()
-		f.DataIterator.Run()
+		f.DataIterator.Run(f.Tables.AsSlice())
 	}()
 
 	dataIteratorWg.Wait()
@@ -439,11 +438,10 @@ func (f *Ferry) RunStandaloneDataCopy(tables []*schema.Table) error {
 	// will get an error dump even though we should not get one, which could be
 	// misleading.
 
-	dataIterator.Tables = tables
 	dataIterator.AddBatchListener(f.BatchWriter.WriteRowBatch)
 	f.logger.WithField("tables", tables).Info("starting delta table copy in cutover")
 
-	dataIterator.Run()
+	dataIterator.Run(tables)
 
 	return nil
 }
