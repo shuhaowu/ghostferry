@@ -321,6 +321,40 @@ func (f *Ferry) RebuildTableSchemaCache() error {
 	return err
 }
 
+func (f *Ferry) RunReconcilerIfNecessary() error {
+	if f.StateToResumeFrom == nil {
+		return nil
+	}
+
+	currentBinlogPosition, err := ShowMasterStatusBinlogPosition(f.SourceDB)
+	if err != nil {
+		return err
+	}
+
+	r := &Reconciler{
+		SourceDB:                f.SourceDB,
+		StartFromBinlogPosition: f.StateToResumeFrom.LastWrittenBinlogPosition,
+		TargetBinlogPosition:    currentBinlogPosition,
+		BatchSize:               f.Config.BinlogEventBatchSize,
+
+		BinlogStreamer:   f.NewBinlogStreamerWithoutStateTracker(),
+		BinlogWriter:     f.NewBinlogWriterWithoutStateTracker(),
+		Throttler:        f.Throttler,
+		ErrorHandler:     f.ErrorHandler,
+		TableSchemaCache: f.Tables,
+	}
+
+	err = r.Run()
+	if err != nil {
+		return err
+	}
+
+	// When the Reconciler.Run method exits, the TargetBinlogPosition is
+	// guarenteed to have finished writing.
+	f.StateToResumeFrom.LastWrittenBinlogPosition = r.TargetBinlogPosition
+	return nil
+}
+
 // Determine the binlog coordinates, table mapping for the pending
 // Ghostferry run.
 func (f *Ferry) Start() error {
