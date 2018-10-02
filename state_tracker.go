@@ -62,6 +62,13 @@ func (s *StateTracker) LastSuccessfulPK(table string) uint64 {
 	return pk
 }
 
+func (s *StateTracker) LastWrittenBinlogPosition() mysql.Position {
+	s.binlogMutex.Lock()
+	defer s.binlogMutex.Unlock()
+
+	return s.lastWrittenBinlogPosition
+}
+
 func (s *StateTracker) MarkTableAsCompleted(table string) {
 	s.tableMutex.Lock()
 	defer s.tableMutex.Unlock()

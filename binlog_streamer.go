@@ -216,6 +216,11 @@ func (s *BinlogStreamer) FlushAndStop() {
 	s.stopRequested = true
 }
 
+func (s *BinlogStreamer) FlushToTargetBinlogPositionAndStop(target mysql.Position) {
+	s.targetBinlogPosition = target
+	s.stopRequested = true
+}
+
 func (s *BinlogStreamer) updateLastStreamedPosAndTime(ev *replication.BinlogEvent) {
 	if ev.Header.LogPos == 0 || ev.Header.Timestamp == 0 {
 		// This shouldn't happen, as the cases where it does happen are excluded.

@@ -30,6 +30,8 @@ const (
 
 	// Could only be sent once by the main thread
 	StatusReady                  string = "READY"
+	StatusReconcile              string = "RECONCILE"
+	StatusStart                  string = "START"
 	StatusBinlogStreamingStarted string = "BINLOG_STREAMING_STARTED"
 	StatusRowCopyCompleted       string = "ROW_COPY_COMPLETED"
 	StatusDone                   string = "DONE"
@@ -152,6 +154,25 @@ func (f *IntegrationFerry) Main() error {
 	}
 
 	err = f.Initialize()
+	if err != nil {
+		return err
+	}
+
+	// The reconciler currently does not emit any status while its running (i.e
+	// its binlog streamer will not send anything to the integration server).
+	// This is okay for now as we are not testing anything that involves
+	// injecting races within the reconciler.
+	err = f.SendStatusAndWaitUntilContinue(StatusReconcile)
+	if err != nil {
+		return err
+	}
+
+	err = f.RunReconcilerIfNecessary()
+	if err != nil {
+		return err
+	}
+
+	err = f.SendStatusAndWaitUntilContinue(StatusStart)
 	if err != nil {
 		return err
 	}

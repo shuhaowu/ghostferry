@@ -31,6 +31,8 @@ module GhostferryIntegration
     module Status
       # This should be in sync with integrationferry.go
       READY = "READY"
+      RECONCILE = "RECONCILE"
+      START = "START"
       BINLOG_STREAMING_STARTED = "BINLOG_STREAMING_STARTED"
       ROW_COPY_COMPLETED = "ROW_COPY_COMPLETED"
       DONE = "DONE"

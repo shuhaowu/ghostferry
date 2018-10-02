@@ -280,24 +280,21 @@ func (f *Ferry) Initialize() (err error) {
 
 	if f.StateToResumeFrom == nil {
 		f.StateTracker = NewStateTracker(f.DataIterationConcurrency * 10)
-	} else {
-		f.StateTracker = NewStateTrackerFromSerializedState(f.DataIterationConcurrency*10, f.StateToResumeFrom)
-	}
 
-	// Loads the schema of the tables that are applicable.
-	// We need to do this at the beginning of the run as this is required
-	// in order to determine the PrimaryKey of each table as well as finding
-	// which value in the binlog event correspond to which field in the
-	// table.
-	if f.StateToResumeFrom != nil {
-		f.Tables = f.StateToResumeFrom.LastKnownTableSchemaCache
-	} else {
+		// Loads the schema of the tables that are applicable.
+		// We need to do this at the beginning of the run as this is required
+		// in order to determine the PrimaryKey of each table as well as finding
+		// which value in the binlog event correspond to which field in the
+		// table.
 		metrics.Measure("LoadTables", nil, 1.0, func() {
 			err = f.RebuildTableSchemaCache()
 		})
 		if err != nil {
 			return err
 		}
+	} else {
+		f.StateTracker = NewStateTrackerFromSerializedState(f.DataIterationConcurrency*10, f.StateToResumeFrom)
+		f.Tables = f.StateToResumeFrom.LastKnownTableSchemaCache
 	}
 
 	f.BinlogStreamer = f.NewBinlogStreamer()
@@ -313,6 +310,40 @@ func (f *Ferry) RebuildTableSchemaCache() error {
 	var err error
 	f.Tables, err = LoadTables(f.SourceDB, f.TableFilter)
 	return err
+}
+
+func (f *Ferry) RunReconcilerIfNecessary() error {
+	if f.StateToResumeFrom == nil {
+		return nil
+	}
+
+	currentBinlogPosition, err := ShowMasterStatusBinlogPosition(f.SourceDB)
+	if err != nil {
+		return err
+	}
+
+	r := &Reconciler{
+		SourceDB:                f.SourceDB,
+		StartFromBinlogPosition: f.StateToResumeFrom.LastWrittenBinlogPosition,
+		TargetBinlogPosition:    currentBinlogPosition,
+		BatchSize:               f.Config.BinlogEventBatchSize,
+
+		BinlogStreamer:   f.NewBinlogStreamer(),
+		BinlogWriter:     f.NewBinlogWriterWithoutStateTracker(),
+		Throttler:        f.Throttler,
+		ErrorHandler:     f.ErrorHandler,
+		TableSchemaCache: f.Tables,
+	}
+
+	err = r.Run()
+	if err != nil {
+		return err
+	}
+
+	// When the Reconciler.Run method exits, the TargetBinlogPosition is
+	// guarenteed to have finished writing.
+	f.StateTracker.UpdateLastWrittenBinlogPosition(r.TargetBinlogPosition)
+	return nil
 }
 
 // Determine the binlog coordinates, table mapping for the pending
@@ -335,7 +366,7 @@ func (f *Ferry) Start() error {
 	// the starting binlog coordinates are determined.
 	var err error
 	if f.StateToResumeFrom != nil {
-		err = f.BinlogStreamer.ConnectBinlogStreamerToMysqlFrom(f.StateToResumeFrom.LastWrittenBinlogPosition)
+		err = f.BinlogStreamer.ConnectBinlogStreamerToMysqlFrom(f.StateTracker.LastWrittenBinlogPosition())
 	} else {
 		err = f.BinlogStreamer.ConnectBinlogStreamerToMysql()
 	}
