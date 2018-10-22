@@ -76,7 +76,7 @@ func (s *StateTracker) UpdateLastWrittenBinlogPosition(pos mysql.Position) {
 	s.lastWrittenBinlogPosition = pos
 }
 
-func (s *StateTracker) Serialize(lastKnownTableSchemaCache TableSchemaCache) *SerializableState {
+func (s *StateTracker) PartialSerialize() *SerializableState {
 	s.tableMutex.RLock()
 	s.binlogMutex.RLock()
 	defer func() {
@@ -85,8 +85,7 @@ func (s *StateTracker) Serialize(lastKnownTableSchemaCache TableSchemaCache) *Se
 	}()
 
 	state := &SerializableState{
-		GhostferryVersion:         VersionString,
-		LastKnownTableSchemaCache: lastKnownTableSchemaCache,
+		GhostferryVersion: VersionString,
 
 		LastWrittenBinlogPosition: s.lastWrittenBinlogPosition,
 		LastSuccessfulPrimaryKeys: make(map[string]uint64),

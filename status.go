@@ -80,7 +80,7 @@ func FetchStatus(f *Ferry, v Verifier) *Status {
 	// Getting all table statuses
 	status.TableStatuses = make([]*TableStatus, 0, len(f.Tables))
 
-	serializedState := f.StateTracker.Serialize(nil)
+	serializedState := f.StateTracker.PartialSerialize()
 
 	lastSuccessfulPKs := serializedState.LastSuccessfulPrimaryKeys
 	completedTables := serializedState.CompletedTables

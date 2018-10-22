@@ -534,7 +534,8 @@ func (f *Ferry) FlushBinlogAndStopStreaming() {
 }
 
 func (f *Ferry) SerializeStateToJSON() (string, error) {
-	serializedState := f.StateTracker.Serialize(f.Tables)
+	serializedState := f.StateTracker.PartialSerialize()
+	serializedState.LastKnownTableSchemaCache = f.Tables
 	stateBytes, err := json.MarshalIndent(serializedState, "", "  ")
 	return string(stateBytes), err
 }
