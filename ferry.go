@@ -6,11 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"os/signal"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -276,7 +273,11 @@ func (f *Ferry) Initialize() (err error) {
 	// Initializing the necessary components of Ghostferry.
 	if f.ErrorHandler == nil {
 		f.ErrorHandler = &PanicErrorHandler{
-			Ferry: f,
+			// Since no ErrorHandler is passed to Ferry, we assume that the
+			// ErrorHandler will not be shared by Ferry and possibly another stage.
+			// This means using a new StateDumper is okay as we only ever want to
+			// dump state about the Ferry stage.
+			StateDumper: NewStateDumper(f),
 		}
 	}
 
@@ -413,26 +414,6 @@ func (f *Ferry) Run() {
 		handleError("throttler", f.Throttler.Run(ctx))
 	}()
 
-	if f.DumpStateToStdoutOnSignal {
-		supportingServicesWg.Add(1)
-
-		go func() {
-			defer supportingServicesWg.Done()
-
-			c := make(chan os.Signal, 1)
-			signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
-
-			select {
-			case <-ctx.Done():
-				f.logger.Debug("shutting down signal monitoring goroutine")
-				return
-			case s := <-c:
-				f.ErrorHandler.Fatal("user", fmt.Errorf("signal received: %v", s.String()))
-			}
-		}()
-
-	}
-
 	binlogWg := &sync.WaitGroup{}
 	binlogWg.Add(2)
 
@@ -484,7 +465,7 @@ func (f *Ferry) RunStandaloneDataCopy(tables []*schema.Table) error {
 	dataIterator := f.NewDataIteratorWithoutStateTracker()
 
 	// BUG: if the PanicErrorHandler fires while running the standalone copy, we
-	// will get an error dump even though we should not get one, which could be
+	// will get a state dump even though we should not get one, which could be
 	// misleading.
 
 	dataIterator.AddBatchListener(f.BatchWriter.WriteRowBatch)

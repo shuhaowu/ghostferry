@@ -246,7 +246,7 @@ type Config struct {
 	ServerBindAddr string
 	WebBasedir     string
 
-	// The state to resume from as dumped by the PanicErrorHandler.
+	// The state to resume from as dumped by the StateDumper.
 	// If this is null, a new Ghostferry run will be started. Otherwise, the
 	// reconciliation process will start and Ghostferry will resume after that.
 	StateToResumeFrom *SerializableState

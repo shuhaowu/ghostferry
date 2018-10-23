@@ -1,6 +1,7 @@
 package integrationferry
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -38,6 +39,8 @@ const (
 
 type IntegrationFerry struct {
 	*ghostferry.Ferry
+
+	stateDumper *ghostferry.StateDumper
 }
 
 // =========================================
@@ -136,6 +139,8 @@ func (f *IntegrationFerry) Start() error {
 func (f *IntegrationFerry) Main() error {
 	var err error
 
+	f.stateDumper = ghostferry.NewStateDumper(f.Ferry)
+
 	err = f.SendStatusAndWaitUntilContinue(StatusReady)
 	if err != nil {
 		return err
@@ -169,8 +174,18 @@ func (f *IntegrationFerry) Main() error {
 		return err
 	}
 
+	ctx, shutdown := context.WithCancel(context.Background())
+
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
+
+	signalHandlerWg := &sync.WaitGroup{}
+	signalHandlerWg.Add(1)
+
+	go func() {
+		defer signalHandlerWg.Done()
+		f.stateDumper.HandleOsSignals(ctx)
+	}()
 
 	go func() {
 		defer wg.Done()
@@ -187,6 +202,9 @@ func (f *IntegrationFerry) Main() error {
 	// the error handler to panic directly.
 	f.FlushBinlogAndStopStreaming()
 	wg.Wait()
+
+	shutdown()
+	signalHandlerWg.Wait()
 
 	return f.SendStatusAndWaitUntilContinue(StatusDone)
 }

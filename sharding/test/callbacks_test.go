@@ -80,7 +80,7 @@ func (t *CallbacksTestSuite) TestFailsRunOnPanicError() {
 	})
 
 	t.Ferry.Ferry.ErrorHandler = &ghostferry.PanicErrorHandler{
-		Ferry:         t.Ferry.Ferry,
+		StateDumper:   ghostferry.NewStateDumper(t.Ferry.Ferry),
 		ErrorCallback: t.Config.ErrorCallback,
 	}
 	defer func() {

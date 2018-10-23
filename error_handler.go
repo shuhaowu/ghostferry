@@ -2,9 +2,7 @@ package ghostferry
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"os"
 	"sync/atomic"
 
 	"github.com/sirupsen/logrus"
@@ -16,7 +14,7 @@ type ErrorHandler interface {
 }
 
 type PanicErrorHandler struct {
-	Ferry         *Ferry
+	StateDumper   *StateDumper
 	errorCount    int32
 	ErrorCallback HTTPCallback
 }
@@ -29,12 +27,7 @@ func (this *PanicErrorHandler) ReportError(from string, err error) {
 		return
 	}
 
-	stateJSON, jsonErr := this.Ferry.SerializeStateToJSON()
-	if jsonErr != nil {
-		logger.WithError(jsonErr).Error("failed to dump state to JSON...")
-	} else {
-		fmt.Fprintln(os.Stdout, stateJSON)
-	}
+	this.StateDumper.DumpState()
 
 	// Invoke ErrorCallback if defined
 	if this.ErrorCallback != (HTTPCallback{}) {

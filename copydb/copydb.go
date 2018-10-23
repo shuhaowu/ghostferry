@@ -1,6 +1,7 @@
 package copydb
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ type CopydbFerry struct {
 	controlServer *ghostferry.ControlServer
 	config        *Config
 	verifier      ghostferry.Verifier
+	stateDumper   *ghostferry.StateDumper
 }
 
 func NewFerry(config *Config) *CopydbFerry {
@@ -41,6 +43,11 @@ func (this *CopydbFerry) Initialize() error {
 		if err != nil {
 			return err
 		}
+	}
+
+	this.stateDumper = ghostferry.NewStateDumper(this.Ferry)
+	this.Ferry.ErrorHandler = &ghostferry.PanicErrorHandler{
+		StateDumper: this.stateDumper,
 	}
 
 	err := this.Ferry.Initialize()
@@ -124,14 +131,23 @@ func (this *CopydbFerry) CreateDatabasesAndTables() error {
 }
 
 func (this *CopydbFerry) runIterativeVerifierAfterRowCopy() error {
-	err := this.verifier.(*ghostferry.IterativeVerifier).VerifyBeforeCutover()
+	verifier := this.verifier.(*ghostferry.IterativeVerifier)
+	this.stateDumper.SwapRunningStage(verifier)
+	err := verifier.VerifyBeforeCutover()
 	return err
 }
 
 func (this *CopydbFerry) Run() {
-	serverWG := &sync.WaitGroup{}
-	serverWG.Add(1)
-	go this.controlServer.Run(serverWG)
+	supportingServicesWg := &sync.WaitGroup{}
+	supportingServicesWg.Add(2)
+
+	go this.controlServer.Run(supportingServicesWg)
+
+	signalHandlingCtx, signalHandlingShutdown := context.WithCancel(context.Background())
+	go func() {
+		defer supportingServicesWg.Done()
+		this.stateDumper.HandleOsSignals(signalHandlingCtx)
+	}()
 
 	copyWG := &sync.WaitGroup{}
 	copyWG.Add(1)
@@ -163,8 +179,10 @@ func (this *CopydbFerry) Run() {
 	// This is where you cutover from using the source database to
 	// using the target database.
 
+	signalHandlingShutdown()
+
 	// Work is done, the process will run the web server until killed.
-	serverWG.Wait()
+	supportingServicesWg.Wait()
 }
 
 func (this *CopydbFerry) ShutdownControlServer() error {
