@@ -9,13 +9,23 @@ import (
 	"github.com/siddontang/go-mysql/mysql"
 )
 
+const (
+	StageFerry           string = "Ferry"
+	StageIterativeVerify string = "IterativeVerify"
+)
+
 type SerializableState struct {
 	GhostferryVersion         string
 	LastKnownTableSchemaCache TableSchemaCache
+	CurrentStage              string
 
 	LastSuccessfulPrimaryKeys map[string]uint64
 	CompletedTables           map[string]bool
 	LastWrittenBinlogPosition mysql.Position
+
+	// TODO: this is currently memory inefficient as we'd effectively double our
+	// memory usage at this moment.
+	ReverifyStore map[string][]uint64
 }
 
 // For tracking the speed of the copy

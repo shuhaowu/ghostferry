@@ -287,6 +287,11 @@ func (f *Ferry) Initialize() (err error) {
 	if f.StateToResumeFrom == nil {
 		f.StateTracker = NewStateTracker(f.DataIterationConcurrency * 10)
 	} else {
+		if f.StateToResumeFrom.CurrentStage != StageFerry {
+			err = fmt.Errorf("StateToResumeFrom.CurrentStage = %v != StageFerry", f.StateToResumeFrom.CurrentStage)
+			f.logger.WithError(err).Error("cannot resume from non ferry stage")
+			return err
+		}
 		f.StateTracker = NewStateTrackerFromSerializedState(f.DataIterationConcurrency*10, f.StateToResumeFrom)
 	}
 
@@ -536,6 +541,7 @@ func (f *Ferry) FlushBinlogAndStopStreaming() {
 func (f *Ferry) SerializeStateToJSON() (string, error) {
 	serializedState := f.StateTracker.PartialSerialize()
 	serializedState.LastKnownTableSchemaCache = f.Tables
+	serializedState.CurrentStage = StageFerry
 	stateBytes, err := json.MarshalIndent(serializedState, "", "  ")
 	return string(stateBytes), err
 }

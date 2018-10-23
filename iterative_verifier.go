@@ -3,6 +3,7 @@ package ghostferry
 import (
 	"bytes"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -118,6 +119,28 @@ func (r *ReverifyStore) flushStore() {
 	r.RowCount = 0
 }
 
+func (r *ReverifyStore) Serialize() map[string][]uint64 {
+	r.mapStoreMutex.Lock()
+	defer r.mapStoreMutex.Unlock()
+
+	store := make(map[string][]uint64)
+	for tableId, pkSet := range r.MapStore {
+		tableKeyBytes, err := json.Marshal(tableId)
+		if err != nil {
+			// This really should never happen
+			panic(err)
+		}
+
+		tableKey := string(tableKeyBytes)
+		store[tableKey] = make([]uint64, 0, len(pkSet))
+		for pk, _ := range pkSet {
+			store[tableKey] = append(store[tableKey], pk)
+		}
+	}
+
+	return store
+}
+
 type verificationResultAndError struct {
 	Result VerificationResult
 	Error  error
@@ -142,6 +165,9 @@ type IterativeVerifier struct {
 	TableRewrites       map[string]string
 	Concurrency         int
 	MaxExpectedDowntime time.Duration
+
+	StateTracker      *StateTracker
+	StateToResumeFrom *SerializableState
 
 	reverifyStore *ReverifyStore
 	logger        *logrus.Entry
@@ -178,7 +204,7 @@ func (v *IterativeVerifier) SanityCheckParameters() error {
 		return fmt.Errorf("iterative verifier concurrency must be greater than 0, not %d", v.Concurrency)
 	}
 
-	if v.TableSchemaCache == nil {
+	if v.StateToResumeFrom == nil && v.TableSchemaCache == nil {
 		return fmt.Errorf("iterative verifier must be given the table schema cache")
 	}
 
@@ -194,6 +220,13 @@ func (v *IterativeVerifier) Initialize() error {
 	}
 
 	v.reverifyStore = NewReverifyStore()
+
+	if v.StateToResumeFrom == nil {
+		v.StateTracker = NewStateTracker(v.Concurrency * 10)
+	} else {
+		v.StateTracker = NewStateTrackerFromSerializedState(v.Concurrency*10, v.StateToResumeFrom)
+	}
+
 	return nil
 }
 
@@ -205,7 +238,7 @@ func (v *IterativeVerifier) VerifyOnce() (VerificationResult, error) {
 			DataCorrect: false,
 			Message:     fmt.Sprintf("verification failed on table: %s for pk: %d", tableSchema.String(), pk),
 		}
-	})
+	}, false)
 
 	v.logger.Info("one-off verification complete")
 
@@ -215,6 +248,16 @@ func (v *IterativeVerifier) VerifyOnce() (VerificationResult, error) {
 	default:
 		return VerificationResult{true, ""}, e
 	}
+}
+
+func (v *IterativeVerifier) SerializeStateToJSON() (string, error) {
+	serializedState := v.StateTracker.PartialSerialize()
+	serializedState.LastKnownTableSchemaCache = v.TableSchemaCache
+	serializedState.CurrentStage = StageIterativeVerify
+	serializedState.ReverifyStore = v.reverifyStore.Serialize()
+
+	stateBytes, err := json.MarshalIndent(serializedState, "", "  ")
+	return string(stateBytes), err
 }
 
 func (v *IterativeVerifier) VerifyBeforeCutover() error {
@@ -227,7 +270,7 @@ func (v *IterativeVerifier) VerifyBeforeCutover() error {
 	err := v.iterateAllTables(func(pk uint64, tableSchema *schema.Table) error {
 		v.reverifyStore.Add(ReverifyEntry{Pk: pk, Table: tableSchema})
 		return nil
-	})
+	}, true)
 
 	if err == nil {
 		// This reverification phase is to reduce the size of the set of rows
@@ -371,7 +414,7 @@ func (v *IterativeVerifier) reverifyUntilStoreIsSmallEnough(maxIterations int) e
 	return nil
 }
 
-func (v *IterativeVerifier) iterateAllTables(mismatchedPkFunc func(uint64, *schema.Table) error) error {
+func (v *IterativeVerifier) iterateAllTables(mismatchedPkFunc func(uint64, *schema.Table) error, updateStateTracker bool) error {
 	pool := &WorkerPool{
 		Concurrency: v.Concurrency,
 		Process: func(tableIndex int) (interface{}, error) {
@@ -381,10 +424,15 @@ func (v *IterativeVerifier) iterateAllTables(mismatchedPkFunc func(uint64, *sche
 				return nil, nil
 			}
 
-			err := v.iterateTableFingerprints(table, mismatchedPkFunc)
+			err := v.iterateTableFingerprints(table, mismatchedPkFunc, updateStateTracker)
 			if err != nil {
 				v.logger.WithError(err).WithField("table", table.String()).Error("error occured during table verification")
 			}
+
+			if updateStateTracker {
+				v.StateTracker.MarkTableAsCompleted(table.String())
+			}
+
 			return nil, err
 		},
 	}
@@ -394,7 +442,7 @@ func (v *IterativeVerifier) iterateAllTables(mismatchedPkFunc func(uint64, *sche
 	return err
 }
 
-func (v *IterativeVerifier) iterateTableFingerprints(table *schema.Table, mismatchedPkFunc func(uint64, *schema.Table) error) error {
+func (v *IterativeVerifier) iterateTableFingerprints(table *schema.Table, mismatchedPkFunc func(uint64, *schema.Table) error, updateStateTracker bool) error {
 	// The cursor will stop iterating when it cannot find anymore rows,
 	// so it will not iterate until MaxUint64.
 	cursor := v.CursorConfig.NewCursorWithoutRowLock(table, 0, math.MaxUint64)
@@ -402,6 +450,8 @@ func (v *IterativeVerifier) iterateTableFingerprints(table *schema.Table, mismat
 	// It only needs the PKs, not the entire row.
 	cursor.ColumnsToSelect = []string{fmt.Sprintf("`%s`", table.GetPKColumn(0).Name)}
 	return cursor.Each(func(batch *RowBatch) error {
+		table := batch.TableSchema()
+
 		metrics.Count("RowEvent", int64(batch.Size()), []MetricTag{
 			MetricTag{"table", table.Name},
 			MetricTag{"source", "iterative_verifier_before_cutover"},
@@ -418,24 +468,30 @@ func (v *IterativeVerifier) iterateTableFingerprints(table *schema.Table, mismat
 			pks = append(pks, pk)
 		}
 
-		mismatchedPks, err := v.compareFingerprints(pks, batch.TableSchema())
+		mismatchedPks, err := v.compareFingerprints(pks, table)
 		if err != nil {
-			v.logger.WithError(err).Errorf("failed to fingerprint table %s", batch.TableSchema().String())
+			v.logger.WithError(err).Errorf("failed to fingerprint table %s", table.String())
 			return err
 		}
 
 		if len(mismatchedPks) > 0 {
 			v.logger.WithFields(logrus.Fields{
-				"table":          batch.TableSchema().String(),
+				"table":          table.String(),
 				"mismatched_pks": mismatchedPks,
 			}).Info("found mismatched rows")
 
 			for _, pk := range mismatchedPks {
-				err := mismatchedPkFunc(pk, batch.TableSchema())
+				err := mismatchedPkFunc(pk, table)
 				if err != nil {
 					return err
 				}
 			}
+		}
+
+		// TODO: this is a bit hacky, but a full refactor will be difficult at this
+		// point in time.
+		if updateStateTracker {
+			v.StateTracker.UpdateLastSuccessfulPK(table.String(), pks[len(pks)-1])
 		}
 
 		return nil
@@ -558,6 +614,7 @@ func (v *IterativeVerifier) binlogEventListener(evs []DMLEvent) error {
 		}
 
 		v.reverifyStore.Add(ReverifyEntry{Pk: pk, Table: ev.TableSchema()})
+		v.StateTracker.UpdateLastWrittenBinlogPosition(ev.BinlogPosition())
 	}
 
 	return nil
