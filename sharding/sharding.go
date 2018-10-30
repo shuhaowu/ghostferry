@@ -134,8 +134,8 @@ func (r *ShardingFerry) newIterativeVerifier() (*ghostferry.IterativeVerifier, e
 		BinlogStreamer:      r.Ferry.BinlogStreamer,
 		CompressionVerifier: compressionVerifier,
 
-		TableSchemaCache: r.Ferry.Tables,
-		Tables:           r.Ferry.Tables.AsSlice(),
+		TableSchemaCache: r.Ferry.TableSchemaCache,
+		Tables:           r.Ferry.TableSchemaCache.AsSlice(),
 
 		SourceDB: r.Ferry.SourceDB,
 		TargetDB: r.Ferry.TargetDB,
@@ -255,7 +255,7 @@ func (r *ShardingFerry) Run() {
 func (r *ShardingFerry) deltaCopyJoinedTables() error {
 	tables := []*schema.Table{}
 
-	for _, table := range r.Ferry.Tables {
+	for _, table := range r.Ferry.TableSchemaCache {
 		if _, exists := r.config.JoinedTables[table.Name]; exists {
 			tables = append(tables, table)
 		}

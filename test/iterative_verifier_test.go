@@ -372,7 +372,7 @@ func (t *IterativeVerifierTestSuite) reloadTables() {
 	tables, err := ghostferry.LoadTables(t.db, tableFilter)
 	t.Require().Nil(err)
 
-	t.Ferry.Tables = tables
+	t.Ferry.TableSchemaCache = tables
 	t.verifier.Tables = tables.AsSlice()
 	t.verifier.TableSchemaCache = tables
 

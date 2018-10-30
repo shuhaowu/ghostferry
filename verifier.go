@@ -51,6 +51,8 @@ type Verifier interface {
 	//
 	// This method maybe called multiple times and it's up to the verifier
 	// to decide if it is possible to re-run the verification.
+	//
+	// This method is primarily used for the ControlServer.
 	StartInBackground() error
 
 	// Wait for the verifier until it finishes verification after it was

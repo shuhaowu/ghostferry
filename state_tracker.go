@@ -9,22 +9,35 @@ import (
 	"github.com/siddontang/go-mysql/mysql"
 )
 
-type SerializableState struct {
-	GhostferryVersion         string
-	LastKnownTableSchemaCache TableSchemaCache
-
+type CopySerializableState struct {
 	LastSuccessfulPrimaryKeys map[string]uint64
 	CompletedTables           map[string]bool
 	LastWrittenBinlogPosition mysql.Position
 }
 
-// For tracking the speed of the copy
-type PKPositionLog struct {
-	Position uint64
-	At       time.Time
+type VerifierSerializableState struct {
+	LastSuccessfulPrimaryKeys  map[string]uint64
+	CompletedTables            map[string]bool
+	LastStreamedBinlogPosition mysql.Position
+
+	// This is not efficient because we have to build this separate map distinct
+	// from the original type as declared in the ReverifyStore struct.
+	//
+	// However, that original struct is currently not directly serializable to
+	// JSON as it uses a struct as a key..
+	ReverifyStore         map[string][]uint64
+	ReverifyStoreRowCount uint64
 }
 
-type StateTracker struct {
+type SerializableState struct {
+	GhostferryVersion         string
+	LastKnownTableSchemaCache TableSchemaCache
+
+	CopyStage     *CopySerializableState
+	VerifierStage *VerifierSerializableState
+}
+
+type CopyStateTracker struct {
 	lastSuccessfulPrimaryKeys map[string]uint64
 	completedTables           map[string]bool
 	lastWrittenBinlogPosition mysql.Position
@@ -35,7 +48,40 @@ type StateTracker struct {
 	copySpeedLog *ring.Ring
 }
 
-func (s *StateTracker) UpdateLastSuccessfulPK(table string, pk uint64) {
+type VerifierStateTracker struct {
+	// The VerifierStateTracker is mostly the same as the CopyStateTracker,
+	// except we retain a reference to ReverifyStore
+	*CopyStateTracker
+
+	reverifyStore *ReverifyStore
+}
+
+type StateTracker struct {
+	CopyStage     *CopyStateTracker
+	VerifierStage *VerifierStateTracker
+}
+
+// PartialSerialize because we are missing the TableSchemaCache
+func (s *StateTracker) PartialSerialize() *SerializableState {
+	state := &SerializableState{
+		GhostferryVersion: VersionString,
+		CopyStage:         s.CopyStage.Serialize(),
+	}
+
+	if s.VerifierStage != nil {
+		state.VerifierStage = s.VerifierStage.Serialize()
+	}
+
+	return state
+}
+
+// For tracking the speed of the copy
+type PKPositionLog struct {
+	Position uint64
+	At       time.Time
+}
+
+func (s *CopyStateTracker) UpdateLastSuccessfulPK(table string, pk uint64) {
 	s.tableMutex.Lock()
 	defer s.tableMutex.Unlock()
 
@@ -45,7 +91,7 @@ func (s *StateTracker) UpdateLastSuccessfulPK(table string, pk uint64) {
 	s.updateSpeedLog(deltaPK)
 }
 
-func (s *StateTracker) LastSuccessfulPK(table string) uint64 {
+func (s *CopyStateTracker) LastSuccessfulPK(table string) uint64 {
 	s.tableMutex.RLock()
 	defer s.tableMutex.RUnlock()
 
@@ -62,21 +108,28 @@ func (s *StateTracker) LastSuccessfulPK(table string) uint64 {
 	return pk
 }
 
-func (s *StateTracker) MarkTableAsCompleted(table string) {
+func (s *CopyStateTracker) MarkTableAsCompleted(table string) {
 	s.tableMutex.Lock()
 	defer s.tableMutex.Unlock()
 
 	s.completedTables[table] = true
 }
 
-func (s *StateTracker) UpdateLastWrittenBinlogPosition(pos mysql.Position) {
+func (s *CopyStateTracker) UpdateLastWrittenBinlogPosition(pos mysql.Position) {
 	s.binlogMutex.Lock()
 	defer s.binlogMutex.Unlock()
 
 	s.lastWrittenBinlogPosition = pos
 }
 
-func (s *StateTracker) Serialize(lastKnownTableSchemaCache TableSchemaCache) *SerializableState {
+func (s *CopyStateTracker) LastWrittenBinlogPosition() mysql.Position {
+	s.binlogMutex.RLock()
+	defer s.binlogMutex.RUnlock()
+
+	return s.lastWrittenBinlogPosition
+}
+
+func (s *CopyStateTracker) Serialize() *CopySerializableState {
 	s.tableMutex.RLock()
 	s.binlogMutex.RLock()
 	defer func() {
@@ -84,10 +137,7 @@ func (s *StateTracker) Serialize(lastKnownTableSchemaCache TableSchemaCache) *Se
 		s.binlogMutex.RUnlock()
 	}()
 
-	state := &SerializableState{
-		GhostferryVersion:         VersionString,
-		LastKnownTableSchemaCache: lastKnownTableSchemaCache,
-
+	state := &CopySerializableState{
 		LastWrittenBinlogPosition: s.lastWrittenBinlogPosition,
 		LastSuccessfulPrimaryKeys: make(map[string]uint64),
 		CompletedTables:           make(map[string]bool),
@@ -107,7 +157,7 @@ func (s *StateTracker) Serialize(lastKnownTableSchemaCache TableSchemaCache) *Se
 // This is reasonably accurate if the rows copied are distributed uniformly
 // between pk = 0 -> max(pk). It would not be accurate if the distribution is
 // concentrated in a particular region.
-func (s *StateTracker) EstimatedPKCopiedPerSecond() float64 {
+func (s *CopyStateTracker) EstimatedPKCopiedPerSecond() float64 {
 	if s.copySpeedLog == nil {
 		return 0.0
 	}
@@ -132,7 +182,7 @@ func (s *StateTracker) EstimatedPKCopiedPerSecond() float64 {
 	return float64(deltaPK) / deltaT
 }
 
-func (s *StateTracker) updateSpeedLog(deltaPK uint64) {
+func (s *CopyStateTracker) updateSpeedLog(deltaPK uint64) {
 	if s.copySpeedLog == nil {
 		return
 	}
@@ -149,7 +199,7 @@ func (s *StateTracker) updateSpeedLog(deltaPK uint64) {
 // than the number of table iterators. This is to ensure the ring buffer used
 // to calculate the speed is not filled with only data from the last iteration
 // of the cursor and thus would be wildly inaccurate.
-func NewStateTracker(speedLogCount int) *StateTracker {
+func NewCopyStateTracker(speedLogCount int) *CopyStateTracker {
 	var speedLog *ring.Ring = nil
 
 	if speedLogCount > 0 {
@@ -160,7 +210,7 @@ func NewStateTracker(speedLogCount int) *StateTracker {
 		}
 	}
 
-	return &StateTracker{
+	return &CopyStateTracker{
 		lastSuccessfulPrimaryKeys: make(map[string]uint64),
 		completedTables:           make(map[string]bool),
 		lastWrittenBinlogPosition: mysql.Position{},
@@ -172,10 +222,30 @@ func NewStateTracker(speedLogCount int) *StateTracker {
 
 // serializedState is a state the tracker should start from, as opposed to
 // starting from the beginning.
-func NewStateTrackerFromSerializedState(speedLogCount int, serializedState *SerializableState) *StateTracker {
-	s := NewStateTracker(speedLogCount)
+func NewCopyStateTrackerFromSerializedState(speedLogCount int, serializedState *CopySerializableState) *CopyStateTracker {
+	s := NewCopyStateTracker(speedLogCount)
 	s.lastSuccessfulPrimaryKeys = serializedState.LastSuccessfulPrimaryKeys
 	s.completedTables = serializedState.CompletedTables
 	s.lastWrittenBinlogPosition = serializedState.LastWrittenBinlogPosition
 	return s
+}
+
+func NewVerifierStateTracker() *VerifierStateTracker {
+	return &VerifierStateTracker{
+		CopyStateTracker: NewCopyStateTracker(0),
+	}
+}
+
+func (s *VerifierStateTracker) Serialize() *VerifierSerializableState {
+	state := s.CopyStateTracker.Serialize()
+
+	serializableReverifyStore, reverifyStoreRowCount := s.reverifyStore.Serialize()
+
+	return &VerifierSerializableState{
+		LastStreamedBinlogPosition: state.LastWrittenBinlogPosition,
+		LastSuccessfulPrimaryKeys:  state.LastSuccessfulPrimaryKeys,
+		CompletedTables:            state.CompletedTables,
+		ReverifyStore:              serializableReverifyStore,
+		ReverifyStoreRowCount:      reverifyStoreRowCount,
+	}
 }

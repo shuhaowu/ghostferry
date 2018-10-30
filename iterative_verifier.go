@@ -118,6 +118,23 @@ func (r *ReverifyStore) flushStore() {
 	r.RowCount = 0
 }
 
+func (r *ReverifyStore) Serialize() (map[string][]uint64, uint64) {
+	r.mapStoreMutex.Lock()
+	defer r.mapStoreMutex.Unlock()
+
+	serializableStore := make(map[string][]uint64)
+	for tableId, pkSet := range r.MapStore {
+		// Guarentees uniqueness as `database`.`tablename` doesn't necessarily guaren
+		tableKey := QuotedTableNameFromString(tableId.SchemaName, tableId.TableName)
+		serializableStore[tableKey] = make([]uint64, 0, len(pkSet))
+		for pk, _ := range pkSet {
+			serializableStore[tableKey] = append(serializableStore[tableKey], pk)
+		}
+	}
+
+	return serializableStore, r.RowCount
+}
+
 type verificationResultAndError struct {
 	Result VerificationResult
 	Error  error
@@ -128,6 +145,7 @@ func (r verificationResultAndError) ErroredOrFailed() bool {
 }
 
 type IterativeVerifier struct {
+	StateTracker        *VerifierStateTracker
 	CompressionVerifier *CompressionVerifier
 	CursorConfig        *CursorConfig
 	BinlogStreamer      *BinlogStreamer
