@@ -78,7 +78,7 @@ func FetchStatus(f *Ferry, v Verifier) *Status {
 	status.Throttled = f.Throttler.Throttled()
 
 	// Getting all table statuses
-	status.TableStatuses = make([]*TableStatus, 0, len(f.Tables))
+	status.TableStatuses = make([]*TableStatus, 0, len(f.TableSchemaCache))
 
 	serializedState := f.StateTracker.Serialize(nil)
 
@@ -92,13 +92,13 @@ func FetchStatus(f *Ferry, v Verifier) *Status {
 	})
 
 	status.CompletedTableCount = len(completedTables)
-	status.TotalTableCount = len(f.Tables)
+	status.TotalTableCount = len(f.TableSchemaCache)
 
-	status.AllTableNames = f.Tables.AllTableNames()
+	status.AllTableNames = f.TableSchemaCache.AllTableNames()
 	sort.Strings(status.AllTableNames)
 
 	dbSet := make(map[string]bool)
-	for _, table := range f.Tables.AsSlice() {
+	for _, table := range f.TableSchemaCache.AsSlice() {
 		dbSet[table.Schema] = true
 	}
 
@@ -110,8 +110,8 @@ func FetchStatus(f *Ferry, v Verifier) *Status {
 
 	// We get the name first because we need to sort them
 	completedTableNames := make([]string, 0, len(completedTables))
-	copyingTableNames := make([]string, 0, len(f.Tables))
-	waitingTableNames := make([]string, 0, len(f.Tables))
+	copyingTableNames := make([]string, 0, len(f.TableSchemaCache))
+	waitingTableNames := make([]string, 0, len(f.TableSchemaCache))
 
 	for tableName, _ := range completedTables {
 		completedTableNames = append(completedTableNames, tableName)
@@ -125,7 +125,7 @@ func FetchStatus(f *Ferry, v Verifier) *Status {
 		copyingTableNames = append(copyingTableNames, tableName)
 	}
 
-	for tableName, _ := range f.Tables {
+	for tableName, _ := range f.TableSchemaCache {
 		if lastSuccessfulPK, ok := lastSuccessfulPKs[tableName]; ok && lastSuccessfulPK != 0 {
 			continue // already started, therefore not waiting
 		}
@@ -146,7 +146,7 @@ func FetchStatus(f *Ferry, v Verifier) *Status {
 	for _, tableName := range completedTableNames {
 		status.TableStatuses = append(status.TableStatuses, &TableStatus{
 			TableName:        tableName,
-			PrimaryKeyName:   f.Tables[tableName].GetPKColumn(0).Name,
+			PrimaryKeyName:   f.TableSchemaCache[tableName].GetPKColumn(0).Name,
 			Status:           "complete",
 			TargetPK:         targetPKs[tableName],
 			LastSuccessfulPK: lastSuccessfulPKs[tableName],
@@ -156,7 +156,7 @@ func FetchStatus(f *Ferry, v Verifier) *Status {
 	for _, tableName := range copyingTableNames {
 		status.TableStatuses = append(status.TableStatuses, &TableStatus{
 			TableName:        tableName,
-			PrimaryKeyName:   f.Tables[tableName].GetPKColumn(0).Name,
+			PrimaryKeyName:   f.TableSchemaCache[tableName].GetPKColumn(0).Name,
 			Status:           "copying",
 			TargetPK:         targetPKs[tableName],
 			LastSuccessfulPK: lastSuccessfulPKs[tableName],
@@ -166,7 +166,7 @@ func FetchStatus(f *Ferry, v Verifier) *Status {
 	for _, tableName := range waitingTableNames {
 		status.TableStatuses = append(status.TableStatuses, &TableStatus{
 			TableName:        tableName,
-			PrimaryKeyName:   f.Tables[tableName].GetPKColumn(0).Name,
+			PrimaryKeyName:   f.TableSchemaCache[tableName].GetPKColumn(0).Name,
 			Status:           "waiting",
 			TargetPK:         targetPKs[tableName],
 			LastSuccessfulPK: 0,

@@ -45,12 +45,12 @@ func (this *BinlogStreamerTestSuite) SetupTest() {
 	this.Require().Nil(err)
 
 	this.binlogStreamer = &ghostferry.BinlogStreamer{
-		DB:           this.sourceDb,
-		DBConfig:     testFerry.Config.Source,
-		MyServerId:   testFerry.Config.MyServerId,
-		ErrorHandler: testFerry.ErrorHandler,
-		Filter:       testFerry.CopyFilter,
-		TableSchema:  tableSchemaCache,
+		DB:               this.sourceDb,
+		DBConfig:         testFerry.Config.Source,
+		MyServerId:       testFerry.Config.MyServerId,
+		ErrorHandler:     testFerry.ErrorHandler,
+		Filter:           testFerry.CopyFilter,
+		TableSchemaCache: tableSchemaCache,
 	}
 }
 

@@ -248,8 +248,8 @@ func setupIterativeVerifierFromFerry(v *ghostferry.IterativeVerifier, f *ghostfe
 	v.BinlogStreamer = f.BinlogStreamer
 	v.SourceDB = f.SourceDB
 	v.TargetDB = f.TargetDB
-	v.Tables = f.Tables.AsSlice()
-	v.TableSchemaCache = f.Tables
+	v.Tables = f.TableSchemaCache.AsSlice()
+	v.TableSchemaCache = f.TableSchemaCache
 	v.Concurrency = 2
 }
 

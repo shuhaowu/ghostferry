@@ -69,7 +69,7 @@ func (t *CopydbTestSuite) TearDownTest() {
 
 func (t *CopydbTestSuite) TestCreateDatabaseAndTableWithRewrites() {
 	var err error
-	t.copydbFerry.Ferry.Tables, err = ghostferry.LoadTables(t.ferry.SourceDB, t.copydbFerry.Ferry.TableFilter)
+	t.copydbFerry.Ferry.TableSchemaCache, err = ghostferry.LoadTables(t.ferry.SourceDB, t.copydbFerry.Ferry.TableFilter)
 	t.Require().Nil(err)
 
 	err = t.copydbFerry.CreateDatabasesAndTables()
