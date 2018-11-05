@@ -56,14 +56,14 @@ func (this *IntegrationTestCase) Setup() {
 	// In the long term, we should replace all these integration tests with
 	// the ruby integration tests, which do not have this issue.
 	PanicIfError(this.Ferry.RebuildTableSchemaCache())
-	this.Ferry.BinlogStreamer.TableSchema = this.Ferry.Tables
+	this.Ferry.BinlogStreamer.TableSchemaCache = this.Ferry.TableSchemaCache
 }
 
 func (this *IntegrationTestCase) StartFerryAndDataWriter() {
 	PanicIfError(this.Ferry.Start())
 
 	this.Verifier = &ghostferry.ChecksumTableVerifier{
-		Tables:   this.Ferry.Tables.AsSlice(),
+		Tables:   this.Ferry.TableSchemaCache.AsSlice(),
 		SourceDB: this.Ferry.SourceDB,
 		TargetDB: this.Ferry.TargetDB,
 	}

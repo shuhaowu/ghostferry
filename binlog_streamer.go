@@ -21,7 +21,7 @@ type BinlogStreamer struct {
 	ErrorHandler ErrorHandler
 	Filter       CopyFilter
 
-	TableSchema TableSchemaCache
+	TableSchemaCache TableSchemaCache
 
 	binlogSyncer               *replication.BinlogSyncer
 	binlogStreamer             *replication.BinlogStreamer
@@ -255,7 +255,7 @@ func (s *BinlogStreamer) handleRowsEvent(ev *replication.BinlogEvent) error {
 		Pos:  ev.Header.LogPos,
 	}
 
-	table := s.TableSchema.Get(string(rowsEvent.Table.Schema), string(rowsEvent.Table.Table))
+	table := s.TableSchemaCache.Get(string(rowsEvent.Table.Schema), string(rowsEvent.Table.Table))
 	if table == nil {
 		return nil
 	}

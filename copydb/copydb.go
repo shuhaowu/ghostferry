@@ -69,8 +69,8 @@ func (this *CopydbFerry) Start() error {
 				ReadRetries: this.config.DBReadRetries,
 			},
 			BinlogStreamer:   this.Ferry.BinlogStreamer,
-			TableSchemaCache: this.Ferry.Tables,
-			Tables:           this.Ferry.Tables.AsSlice(),
+			TableSchemaCache: this.Ferry.TableSchemaCache,
+			Tables:           this.Ferry.TableSchemaCache.AsSlice(),
 			SourceDB:         this.Ferry.SourceDB,
 			TargetDB:         this.Ferry.TargetDB,
 			Concurrency:      this.config.DataIterationConcurrency,
@@ -86,7 +86,7 @@ func (this *CopydbFerry) Start() error {
 		this.verifier = iterativeVerifier
 	} else if this.config.VerifierType == VerifierTypeChecksumTable {
 		this.verifier = &ghostferry.ChecksumTableVerifier{
-			Tables:           this.Ferry.Tables.AsSlice(),
+			Tables:           this.Ferry.TableSchemaCache.AsSlice(),
 			SourceDB:         this.Ferry.SourceDB,
 			TargetDB:         this.Ferry.TargetDB,
 			DatabaseRewrites: this.Ferry.Config.DatabaseRewrites,
@@ -104,7 +104,7 @@ func (this *CopydbFerry) CreateDatabasesAndTables() error {
 	// We need to create the same table/schemas on the target database
 	// as the ones we are copying.
 	logrus.Info("creating databases and tables on target")
-	for tableName := range this.Ferry.Tables {
+	for tableName := range this.Ferry.TableSchemaCache {
 		t := strings.Split(tableName, ".")
 
 		err := this.createDatabaseIfExistsOnTarget(t[0])

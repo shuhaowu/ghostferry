@@ -64,7 +64,7 @@ type Ferry struct {
 	ErrorHandler ErrorHandler
 	Throttler    Throttler
 
-	Tables TableSchemaCache
+	TableSchemaCache TableSchemaCache
 
 	StartTime    time.Time
 	DoneTime     time.Time
@@ -108,12 +108,12 @@ func (f *Ferry) NewDataIteratorWithoutStateTracker() *DataIterator {
 
 func (f *Ferry) NewBinlogStreamer() *BinlogStreamer {
 	return &BinlogStreamer{
-		DB:           f.SourceDB,
-		DBConfig:     f.Source,
-		MyServerId:   f.Config.MyServerId,
-		ErrorHandler: f.ErrorHandler,
-		Filter:       f.CopyFilter,
-		TableSchema:  f.Tables,
+		DB:               f.SourceDB,
+		DBConfig:         f.Source,
+		MyServerId:       f.Config.MyServerId,
+		ErrorHandler:     f.ErrorHandler,
+		Filter:           f.CopyFilter,
+		TableSchemaCache: f.TableSchemaCache,
 	}
 }
 
@@ -294,7 +294,7 @@ func (f *Ferry) Initialize() (err error) {
 		}
 	} else {
 		f.StateTracker = NewStateTrackerFromSerializedState(f.DataIterationConcurrency*10, f.StateToResumeFrom)
-		f.Tables = f.StateToResumeFrom.LastKnownTableSchemaCache
+		f.TableSchemaCache = f.StateToResumeFrom.LastKnownTableSchemaCache
 	}
 
 	f.BinlogStreamer = f.NewBinlogStreamer()
@@ -308,7 +308,7 @@ func (f *Ferry) Initialize() (err error) {
 
 func (f *Ferry) RebuildTableSchemaCache() error {
 	var err error
-	f.Tables, err = LoadTables(f.SourceDB, f.TableFilter)
+	f.TableSchemaCache, err = LoadTables(f.SourceDB, f.TableFilter)
 	return err
 }
 
@@ -336,7 +336,7 @@ func (f *Ferry) reconcileBinlogs() error {
 		BinlogWriter:     f.NewBinlogWriterWithoutStateTracker(),
 		Throttler:        f.Throttler,
 		ErrorHandler:     f.ErrorHandler,
-		TableSchemaCache: f.Tables,
+		TableSchemaCache: f.TableSchemaCache,
 	}
 
 	err = r.Run()
@@ -446,7 +446,7 @@ func (f *Ferry) Run() {
 
 	go func() {
 		defer dataIteratorWg.Done()
-		f.DataIterator.Run(f.Tables.AsSlice())
+		f.DataIterator.Run(f.TableSchemaCache.AsSlice())
 	}()
 
 	dataIteratorWg.Wait()
@@ -532,7 +532,7 @@ func (f *Ferry) FlushBinlogAndStopStreaming() {
 }
 
 func (f *Ferry) SerializeStateToJSON() (string, error) {
-	serializedState := f.StateTracker.Serialize(f.Tables)
+	serializedState := f.StateTracker.Serialize(f.TableSchemaCache)
 	stateBytes, err := json.MarshalIndent(serializedState, "", "  ")
 	return string(stateBytes), err
 }
