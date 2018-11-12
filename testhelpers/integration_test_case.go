@@ -57,6 +57,9 @@ func (this *IntegrationTestCase) Setup() {
 	// the ruby integration tests, which do not have this issue.
 	PanicIfError(this.Ferry.RebuildTableSchemaCache())
 	this.Ferry.BinlogStreamer.TableSchemaCache = this.Ferry.TableSchemaCache
+	if v, ok := this.Ferry.Verifier.(*ghostferry.IterativeVerifier); ok {
+		v.TableSchemaCache = this.Ferry.TableSchemaCache
+	}
 }
 
 func (this *IntegrationTestCase) StartFerryAndDataWriter() {

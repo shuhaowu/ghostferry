@@ -27,8 +27,5 @@ type Config struct {
 	IgnoredVerificationColumns map[string][]string
 	PrimaryKeyTables           []string
 
-	VerifierIterationConcurrency int
-	MaxExpectedVerifierDowntime  string
-
 	Throttle *ghostferry.LagThrottlerConfig
 }

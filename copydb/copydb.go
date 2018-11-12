@@ -48,56 +48,13 @@ func (this *CopydbFerry) Initialize() error {
 		return err
 	}
 
+	this.controlServer.Verifier = this.Ferry.Verifier
+
 	return this.controlServer.Initialize()
 }
 
 func (this *CopydbFerry) Start() error {
-	if this.config.VerifierType == VerifierTypeIterative {
-		this.Ferry.DataIterator.AddDoneListener(this.runIterativeVerifierAfterRowCopy)
-	}
-
-	err := this.Ferry.Start()
-	if err != nil {
-		return err
-	}
-
-	if this.config.VerifierType == VerifierTypeIterative {
-		iterativeVerifier := &ghostferry.IterativeVerifier{
-			CursorConfig: &ghostferry.CursorConfig{
-				DB:          this.Ferry.SourceDB,
-				BatchSize:   this.config.DataIterationBatchSize,
-				ReadRetries: this.config.DBReadRetries,
-			},
-			BinlogStreamer:   this.Ferry.BinlogStreamer,
-			TableSchemaCache: this.Ferry.TableSchemaCache,
-			Tables:           this.Ferry.TableSchemaCache.AsSlice(),
-			SourceDB:         this.Ferry.SourceDB,
-			TargetDB:         this.Ferry.TargetDB,
-			Concurrency:      this.config.DataIterationConcurrency,
-			DatabaseRewrites: this.Ferry.Config.DatabaseRewrites,
-			TableRewrites:    this.Ferry.Config.TableRewrites,
-		}
-
-		err = iterativeVerifier.Initialize()
-		if err != nil {
-			return err
-		}
-
-		this.verifier = iterativeVerifier
-	} else if this.config.VerifierType == VerifierTypeChecksumTable {
-		this.verifier = &ghostferry.ChecksumTableVerifier{
-			Tables:           this.Ferry.TableSchemaCache.AsSlice(),
-			SourceDB:         this.Ferry.SourceDB,
-			TargetDB:         this.Ferry.TargetDB,
-			DatabaseRewrites: this.Ferry.Config.DatabaseRewrites,
-			TableRewrites:    this.Ferry.Config.TableRewrites,
-		}
-	} else {
-		this.verifier = nil
-	}
-
-	this.controlServer.Verifier = this.verifier
-	return nil
+	return this.Ferry.Start()
 }
 
 func (this *CopydbFerry) CreateDatabasesAndTables() error {
@@ -121,11 +78,6 @@ func (this *CopydbFerry) CreateDatabasesAndTables() error {
 	}
 
 	return nil
-}
-
-func (this *CopydbFerry) runIterativeVerifierAfterRowCopy() error {
-	err := this.verifier.(*ghostferry.IterativeVerifier).VerifyBeforeCutover()
-	return err
 }
 
 func (this *CopydbFerry) Run() {

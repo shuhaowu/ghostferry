@@ -128,12 +128,13 @@ func (r verificationResultAndError) ErroredOrFailed() bool {
 }
 
 type IterativeVerifier struct {
+	BinlogStreamer   *BinlogStreamer
+	SourceDB         *sql.DB
+	TargetDB         *sql.DB
+	TableSchemaCache TableSchemaCache
+
 	CompressionVerifier *CompressionVerifier
 	CursorConfig        *CursorConfig
-	BinlogStreamer      *BinlogStreamer
-	TableSchemaCache    TableSchemaCache
-	SourceDB            *sql.DB
-	TargetDB            *sql.DB
 
 	Tables              []*schema.Table
 	IgnoredTables       []string
