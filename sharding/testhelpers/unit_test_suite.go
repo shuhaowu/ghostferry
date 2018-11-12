@@ -106,6 +106,8 @@ func (t *ShardingUnitTestSuite) SetupTest() {
 	// HACK: must rebuild table schema cache as this is done incorrectly
 	testhelpers.PanicIfError(t.Ferry.Ferry.RebuildTableSchemaCache())
 	t.Ferry.Ferry.BinlogStreamer.TableSchemaCache = t.Ferry.Ferry.TableSchemaCache
+	t.Ferry.Ferry.Verifier.(*ghostferry.IterativeVerifier).TableSchemaCache = t.Ferry.Ferry.TableSchemaCache
+	t.Ferry.Ferry.Verifier.(*ghostferry.IterativeVerifier).Tables = t.Ferry.Ferry.TableSchemaCache.AsSlice()
 }
 
 func (t *ShardingUnitTestSuite) TearDownTest() {

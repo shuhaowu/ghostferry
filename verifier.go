@@ -46,6 +46,10 @@ func (r VerificationResultAndStatus) IsDone() bool {
 // the ControlServer. If there is no such need, one does not need to
 // implement this interface.
 type Verifier interface {
+	// If the Verifier needs to do anything immediately after the DataIterator
+	// finishes copying data and before cutover occurs, implement this function.
+	VerifyBeforeCutover() error
+
 	// Start the verifier in the background during the cutover phase.
 	// Traditionally, this is called from within the ControlServer.
 	//
@@ -89,6 +93,11 @@ type ChecksumTableVerifier struct {
 
 	logger *logrus.Entry
 	wg     *sync.WaitGroup
+}
+
+func (v *ChecksumTableVerifier) VerifyBeforeCutover() error {
+	// All verification occurs in cutover for this verifier.
+	return nil
 }
 
 func (v *ChecksumTableVerifier) Verify() (VerificationResult, error) {
