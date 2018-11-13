@@ -145,10 +145,6 @@ func (f *IntegrationFerry) Start() error {
 	return nil
 }
 
-func (f *IntegrationFerry) VerifyDuringCutover() error {
-
-}
-
 // ===========================================
 // Code to handle an almost standard Ferry run
 // ===========================================

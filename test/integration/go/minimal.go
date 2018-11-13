@@ -26,7 +26,7 @@ func main() {
 		panic(err)
 	}
 
-	if os.Getenv("GHOSTFERRY_VERIFIER_ITERATIVE") != "" {
+	if os.Getenv("GHOSTFERRY_ITERATIVE_VERIFIER") != "" {
 		config = enableIterativeVerifier(config)
 	}
 

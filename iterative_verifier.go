@@ -538,8 +538,9 @@ func (v *IterativeVerifier) reverifyPks(table *schema.Table, pks []uint64) (Veri
 	}
 
 	return VerificationResult{
-		DataCorrect: false,
-		Message:     fmt.Sprintf("verification failed on table: %s for pks: %s", table.String(), strings.Join(pkStrings, ",")),
+		DataCorrect:     false,
+		Message:         fmt.Sprintf("verification failed on table: %s for pks: %s", table.String(), strings.Join(pkStrings, ",")),
+		IncorrectTables: []string{table.String()},
 	}, mismatchedPks, nil
 }
 
