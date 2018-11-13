@@ -98,7 +98,7 @@ func (f *Ferry) NewDataIterator() *DataIterator {
 			BatchSize:   f.Config.DataIterationBatchSize,
 			ReadRetries: f.Config.DBReadRetries,
 		},
-		StateTracker: f.StateTracker,
+		StateTracker: f.StateTracker.CopyStage,
 	}
 
 	if f.CopyFilter != nil {
@@ -136,7 +136,7 @@ func (f *Ferry) NewBinlogWriter() *BinlogWriter {
 		WriteRetries: f.Config.DBWriteRetries,
 
 		ErrorHandler: f.ErrorHandler,
-		StateTracker: f.StateTracker,
+		StateTracker: f.StateTracker.CopyStage,
 	}
 }
 
@@ -149,7 +149,7 @@ func (f *Ferry) NewBinlogWriterWithoutStateTracker() *BinlogWriter {
 func (f *Ferry) NewBatchWriter() *BatchWriter {
 	batchWriter := &BatchWriter{
 		DB:           f.TargetDB,
-		StateTracker: f.StateTracker,
+		StateTracker: f.StateTracker.CopyStage,
 
 		DatabaseRewrites: f.Config.DatabaseRewrites,
 		TableRewrites:    f.Config.TableRewrites,
@@ -357,14 +357,18 @@ func (f *Ferry) Initialize() (err error) {
 		f.Throttler = &PauserThrottler{}
 	}
 
+	// Initializes the structs required for the copy stage of Ghostferry
 	if f.StateToResumeFrom == nil {
-		f.StateTracker = NewStateTracker(f.DataIterationConcurrency * 10)
+		f.StateTracker = &StateTracker{
+			CopyStage: NewCopyStateTracker(f.DataIterationConcurrency * 10),
+		}
 
 		// Loads the schema of the tables that are applicable.
 		// We need to do this at the beginning of the run as this is required
 		// in order to determine the PrimaryKey of each table as well as finding
 		// which value in the binlog event correspond to which field in the
 		// table.
+		//
 		metrics.Measure("LoadTables", nil, 1.0, func() {
 			err = f.RebuildTableSchemaCache()
 		})
@@ -372,15 +376,21 @@ func (f *Ferry) Initialize() (err error) {
 			return err
 		}
 	} else {
-		f.StateTracker = NewStateTrackerFromSerializedState(f.DataIterationConcurrency*10, f.StateToResumeFrom)
+		f.StateTracker = &StateTracker{
+			CopyStage: NewCopyStateTrackerFromSerializedState(f.DataIterationConcurrency*10, f.StateToResumeFrom.CopyStage),
+		}
+
 		f.TableSchemaCache = f.StateToResumeFrom.LastKnownTableSchemaCache
 	}
+
+	f.StateTracker.TableSchemaCache = f.TableSchemaCache
 
 	f.BinlogStreamer = f.NewBinlogStreamer()
 	f.BinlogWriter = f.NewBinlogWriter()
 	f.DataIterator = f.NewDataIterator()
 	f.BatchWriter = f.NewBatchWriter()
 
+	// Initializes the structures required for the verifier stage of Ghostferry
 	if f.Config.VerifierType != "" {
 		if f.Verifier != nil {
 			return errors.New("VerifierType specified and Verifier is given. these are mutually exclusive options")
@@ -399,6 +409,19 @@ func (f *Ferry) Initialize() (err error) {
 		default:
 			return fmt.Errorf("'%s' is not a known VerifierType", f.Config.VerifierType)
 		}
+	}
+
+	switch v := f.Verifier.(type) {
+	case *IterativeVerifier:
+		if f.StateToResumeFrom != nil && f.StateToResumeFrom.VerifierStage != nil {
+			f.StateTracker.VerifierStage = NewVerifierStateTrackerFromSerializedState(v.reverifyStore, f.StateToResumeFrom.VerifierStage)
+		} else {
+			f.StateTracker.VerifierStage = NewVerifierStateTracker(v.reverifyStore)
+		}
+
+		v.StateTracker = f.StateTracker.VerifierStage
+	default:
+		// skip
 	}
 
 	f.logger.Info("ferry initialized")
@@ -423,7 +446,7 @@ func (f *Ferry) RunReconcilerIfNecessary() error {
 
 	r := &Reconciler{
 		SourceDB:                f.SourceDB,
-		StartFromBinlogPosition: f.StateToResumeFrom.LastWrittenBinlogPosition,
+		StartFromBinlogPosition: f.StateToResumeFrom.MinBinlogPosition(),
 		TargetBinlogPosition:    currentBinlogPosition,
 		BatchSize:               f.Config.BinlogEventBatchSize,
 
@@ -441,7 +464,10 @@ func (f *Ferry) RunReconcilerIfNecessary() error {
 
 	// When the Reconciler.Run method exits, the TargetBinlogPosition is
 	// guarenteed to have finished writing.
-	f.StateTracker.UpdateLastWrittenBinlogPosition(r.TargetBinlogPosition)
+	f.StateTracker.CopyStage.UpdateLastWrittenBinlogPosition(r.TargetBinlogPosition)
+	if f.StateTracker.VerifierStage != nil {
+		f.StateTracker.VerifierStage.UpdateLastWrittenBinlogPosition(r.TargetBinlogPosition)
+	}
 	return nil
 }
 
@@ -458,14 +484,24 @@ func (f *Ferry) Start() error {
 	f.BinlogStreamer.AddEventListener(f.BinlogWriter.BufferBinlogEvents)
 	f.DataIterator.AddBatchListener(f.BatchWriter.WriteRowBatch)
 
-	// The starting binlog coordinates must be determined first. If it is
-	// determined after the DataIterator starts, the DataIterator might
-	// miss some records that are inserted between the time the
-	// DataIterator determines the range of IDs to copy and the time that
-	// the starting binlog coordinates are determined.
+	// The starting binlog coordinates either is determined on the fly when this
+	// is not a resuming run or obtained from the CopyStage's
+	// LastWrittenBinlogPosition.
+	//
+	// The determination of the binlog position when not resuming must occur
+	// before the DataIterator starts. Otherwise the DataIterator might miss
+	// some records that are inserted between the time the DataIterator
+	// determines the range of IDs to copy and the time that the starting binlog
+	// coordinates are determined.
+	//
+	// It is okay to use the CopyStage's LastWrittenBinlogPosition even though
+	// the CopyStage and the VerifierStage could have different binlog positions
+	// in StateToResume. This is because RunReconcilerIfNecessary, which is
+	// required in the resuming case, will equalize the two stages' binlog
+	// position.
 	var err error
 	if f.StateToResumeFrom != nil {
-		err = f.BinlogStreamer.ConnectBinlogStreamerToMysqlFrom(f.StateTracker.LastWrittenBinlogPosition())
+		err = f.BinlogStreamer.ConnectBinlogStreamerToMysqlFrom(f.StateTracker.CopyStage.LastWrittenBinlogPosition())
 	} else {
 		err = f.BinlogStreamer.ConnectBinlogStreamerToMysql()
 	}
@@ -637,7 +673,7 @@ func (f *Ferry) FlushBinlogAndStopStreaming() {
 }
 
 func (f *Ferry) SerializeStateToJSON() (string, error) {
-	serializedState := f.StateTracker.Serialize(f.TableSchemaCache)
+	serializedState := f.StateTracker.Serialize()
 	stateBytes, err := json.MarshalIndent(serializedState, "", "  ")
 	return string(stateBytes), err
 }

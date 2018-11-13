@@ -58,6 +58,23 @@ func NewReverifyStore() *ReverifyStore {
 	return r
 }
 
+func (r *ReverifyStore) Serialize() (map[string][]uint64, uint64) {
+	r.mapStoreMutex.Lock()
+	defer r.mapStoreMutex.Unlock()
+
+	m := make(map[string][]uint64)
+	for tableId, pkSet := range r.MapStore {
+		// BUG: This will run into problems if there are ` within the table names
+		tableName := fmt.Sprintf("%s.%s", tableId.SchemaName, tableId.TableName)
+		m[tableName] = make([]uint64, 0, len(pkSet))
+		for pk, _ := range pkSet {
+			m[tableName] = append(m[tableName], pk)
+		}
+	}
+
+	return m, r.RowCount
+}
+
 func (r *ReverifyStore) Add(entry ReverifyEntry) {
 	r.mapStoreMutex.Lock()
 	defer r.mapStoreMutex.Unlock()
@@ -132,6 +149,7 @@ type IterativeVerifier struct {
 	SourceDB         *sql.DB
 	TargetDB         *sql.DB
 	TableSchemaCache TableSchemaCache
+	StateTracker     *VerifierStateTracker
 
 	CompressionVerifier *CompressionVerifier
 	CursorConfig        *CursorConfig

@@ -95,9 +95,10 @@ module GhostferryIntegration
       refute dumped_state.nil?
       refute dumped_state["GhostferryVersion"].nil?
       refute dumped_state["LastKnownTableSchemaCache"].nil?
-      refute dumped_state["LastSuccessfulPrimaryKeys"].nil?
-      refute dumped_state["CompletedTables"].nil?
-      refute dumped_state["LastWrittenBinlogPosition"].nil?
+      refute dumped_state["CopyStage"].nil?
+      refute dumped_state["CopyStage"]["LastSuccessfulPrimaryKeys"].nil?
+      refute dumped_state["CopyStage"]["CompletedTables"].nil?
+      refute dumped_state["CopyStage"]["LastWrittenBinlogPosition"].nil?
     end
 
     protected
