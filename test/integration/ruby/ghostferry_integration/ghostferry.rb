@@ -167,13 +167,11 @@ module GhostferryIntegration
      end
     end
 
-    def start_ghostferry(resuming_state = nil)
+    def start_ghostferry(resuming_state = nil, environment: {})
       @subprocess_thread = Thread.new do
         Thread.current.report_on_exception = false
 
-        environment = {
-          ENV_KEY_SOCKET_PATH => SOCKET_PATH
-        }
+        environment[ENV_KEY_SOCKET_PATH] = SOCKET_PATH
 
         @logger.info("starting ghostferry test binary #{@compiled_binary_path}")
         Open3.popen3(environment, @compiled_binary_path) do |stdin, stdout, stderr, wait_thr|
@@ -251,23 +249,28 @@ module GhostferryIntegration
       reset_state
     end
 
-    def run(resuming_state = nil)
+    def run(resuming_state = nil, environment: {})
       resuming_state = JSON.generate(resuming_state) if resuming_state.is_a?(Hash)
 
       compile_binary
       start_server
       wait_until_server_has_started
-      start_ghostferry(resuming_state)
+      start_ghostferry(resuming_state, environment: environment)
       wait_until_ghostferry_run_is_complete
     ensure
       remove_socket
     end
 
+    def run_with_iterative_verifier_enabled(resuming_state = nil, environment: {})
+      environment["GHOSTFERRY_ITERATIVE_VERIFIER"] = "1"
+      run(resuming_state, environment: environment)
+    end
+
     # When using this method, you need to call it within the block of
     # GhostferryIntegration::TestCase#with_state_cleanup to ensure that the
     # integration server is shutdown properly.
-    def run_expecting_interrupt(resuming_state = nil)
-      run(resuming_state)
+    def run_expecting_interrupt(resuming_state = nil, environment: {})
+      run(resuming_state, environment: environment)
     rescue GhostferryExitFailure
       dumped_state = @stdout.join("")
       JSON.parse(dumped_state)

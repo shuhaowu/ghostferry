@@ -81,4 +81,61 @@ class TrivialIntegrationTests < GhostferryIntegration::TestCase
       assert_test_table_is_identical
     end
   end
+
+  def test_iterative_verifier_succeeds_in_normal_run
+    use_datawriter
+    @dbs.seed_simple_database_with_single_table
+
+    verified = false
+    @ghostferry.on_status(Ghostferry::Status::VERIFIED) do |num_failed, *incorrect_tables|
+      verified = true
+
+      assert_equal "0", num_failed
+      assert_equal 0, incorrect_tables.length
+    end
+
+    @ghostferry.run_with_iterative_verifier_enabled
+    assert verified
+    assert_test_table_is_identical
+  end
+
+  def test_iterative_verifier_fails_if_binlog_streamer_incorrectly_copies_data
+    use_datawriter
+    @dbs.seed_simple_database_with_single_table
+
+    # To fake that Ghostferry actually screwed up copying data, we first choose
+    # a row and update it during ROW_COPY_COMPLETED. This row will be picked up
+    # by the binlog streamer and also be added into the reverification queue.
+    #
+    # Then, during VERIFY_BEFORE_CUTOVER, at which point the binlog streaming
+    # has stopped, we delete this row. This should cause the verification to
+    # fail if this test is to be passed.
+
+    table_name = GhostferryIntegration::DbManager::DEFAULT_FULL_TABLE_NAME
+
+    chosen_id = 0
+    verified = false
+    @ghostferry.on_status(Ghostferry::Status::ROW_COPY_COMPLETED) do
+      result = @dbs.source.query("SELECT id FROM #{table_name} ORDER BY id LIMIT 1")
+      chosen_id = result.first["id"]
+
+      refute chosen_id == 0
+      @dbs.source.query("UPDATE #{table_name} SET data = 'something' WHERE id = #{chosen_id}")
+    end
+
+    @ghostferry.on_status(Ghostferry::Status::VERIFY_DURING_CUTOVER) do
+      refute chosen_id == 0
+      @dbs.source.query("DELETE FROM #{table_name} WHERE id = #{chosen_id}")
+    end
+
+    @ghostferry.on_status(Ghostferry::Status::VERIFIED) do |num_failed, *incorrect_tables|
+      verified = true
+
+      assert_equal "1", num_failed
+      assert_equal ["gftest.test_table_1"], incorrect_tables
+    end
+
+    @ghostferry.run_with_iterative_verifier_enabled
+    assert verified
+  end
 end
