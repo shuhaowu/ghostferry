@@ -18,8 +18,9 @@ func (e IncompleteVerificationError) Error() string {
 }
 
 type VerificationResult struct {
-	DataCorrect bool
-	Message     string
+	DataCorrect     bool
+	Message         string
+	IncorrectTables []string
 }
 
 func (e VerificationResult) Error() string {
@@ -50,6 +51,10 @@ type Verifier interface {
 	// finishes copying data and before cutover occurs, implement this function.
 	VerifyBeforeCutover() error
 
+	// This is called during cutover and should give the result of the
+	// verification once returned.
+	VerifyDuringCutover() (VerificationResult, error)
+
 	// Start the verifier in the background during the cutover phase.
 	// Traditionally, this is called from within the ControlServer.
 	//
@@ -71,7 +76,7 @@ type Verifier interface {
 	// If the verification has been completed successfully (without errors) and
 	// the data checks out to be "correct", the result will be
 	// VerificationResult{true, ""}, with error = nil.
-	// Otherwise, the result will be VerificationResult{false, "message"}, with
+	// Otherwise, the result will be VerificationResult{false, "message", [sourceTableNames]}, with
 	// error = nil.
 	//
 	// If the verification is "done" but experienced an error during the check,
@@ -100,7 +105,7 @@ func (v *ChecksumTableVerifier) VerifyBeforeCutover() error {
 	return nil
 }
 
-func (v *ChecksumTableVerifier) Verify() (VerificationResult, error) {
+func (v *ChecksumTableVerifier) VerifyDuringCutover() (VerificationResult, error) {
 	if v.logger == nil {
 		v.logger = logrus.WithField("tag", "checksum_verifier")
 	}
@@ -169,11 +174,15 @@ func (v *ChecksumTableVerifier) Verify() (VerificationResult, error) {
 			logWithTable.WithFields(logFields).Info("tables on source and target verified to match")
 		} else {
 			logWithTable.WithFields(logFields).Error("tables on source and target DOES NOT MATCH")
-			return VerificationResult{false, fmt.Sprintf("data on table %s (%s) mismatched", sourceTable, targetTable)}, nil
+			return VerificationResult{
+				false,
+				fmt.Sprintf("data on table %s (%s) mismatched", sourceTable, targetTable),
+				[]string{table.String()},
+			}, nil
 		}
 	}
 
-	return VerificationResult{true, ""}, nil
+	return VerificationResult{true, "", []string{}}, nil
 }
 
 func (v *ChecksumTableVerifier) fetchChecksumValueFromRow(row *sql.Row) (int64, error) {
@@ -219,7 +228,7 @@ func (v *ChecksumTableVerifier) StartInBackground() error {
 	go func() {
 		defer v.wg.Done()
 
-		v.verificationResultAndStatus.VerificationResult, v.verificationErr = v.Verify()
+		v.verificationResultAndStatus.VerificationResult, v.verificationErr = v.VerifyDuringCutover()
 		v.verificationResultAndStatus.DoneTime = time.Now()
 		v.started.Set(false)
 	}()

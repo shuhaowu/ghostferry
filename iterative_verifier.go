@@ -203,8 +203,9 @@ func (v *IterativeVerifier) VerifyOnce() (VerificationResult, error) {
 
 	err := v.iterateAllTables(func(pk uint64, tableSchema *schema.Table) error {
 		return VerificationResult{
-			DataCorrect: false,
-			Message:     fmt.Sprintf("verification failed on table: %s for pk: %d", tableSchema.String(), pk),
+			DataCorrect:     false,
+			Message:         fmt.Sprintf("verification failed on table: %s for pk: %d", tableSchema.String(), pk),
+			IncorrectTables: []string{tableSchema.String()},
 		}
 	})
 
@@ -214,7 +215,7 @@ func (v *IterativeVerifier) VerifyOnce() (VerificationResult, error) {
 	case VerificationResult:
 		return e, nil
 	default:
-		return VerificationResult{true, ""}, e
+		return VerificationResult{true, "", []string{}}, e
 	}
 }
 
@@ -447,7 +448,7 @@ func (v *IterativeVerifier) verifyStore(sourceTag string, additionalTags []Metri
 	v.logger.WithField("batches", len(allBatches)).Debug("reverifying")
 
 	if len(allBatches) == 0 {
-		return VerificationResult{true, ""}, nil
+		return VerificationResult{true, "", []string{}}, nil
 	}
 
 	erroredOrFailed := errors.New("verification of store errored or failed")
@@ -481,7 +482,7 @@ func (v *IterativeVerifier) verifyStore(sourceTag string, additionalTags []Metri
 					v.reverifyStore.Add(ReverifyEntry{Pk: pk, Table: table})
 				}
 
-				resultAndErr.Result = VerificationResult{true, ""}
+				resultAndErr.Result = VerificationResult{true, "", []string{}}
 			}
 
 			if resultAndErr.ErroredOrFailed() {
@@ -528,7 +529,7 @@ func (v *IterativeVerifier) reverifyPks(table *schema.Table, pks []uint64) (Veri
 	}
 
 	if len(mismatchedPks) == 0 {
-		return VerificationResult{true, ""}, mismatchedPks, nil
+		return VerificationResult{true, "", []string{}}, mismatchedPks, nil
 	}
 
 	pkStrings := make([]string, len(mismatchedPks))
