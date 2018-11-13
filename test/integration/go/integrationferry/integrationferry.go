@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,8 @@ const (
 	StatusStart                  string = "START"
 	StatusBinlogStreamingStarted string = "BINLOG_STREAMING_STARTED"
 	StatusRowCopyCompleted       string = "ROW_COPY_COMPLETED"
+	StatusVerifyDuringCutover    string = "VERIFY_DURING_CUTOVER"
+	StatusVerified               string = "VERIFIED"
 	StatusDone                   string = "DONE"
 
 	// Could be sent by multiple goroutines in parallel
@@ -142,6 +145,10 @@ func (f *IntegrationFerry) Start() error {
 	return nil
 }
 
+func (f *IntegrationFerry) VerifyDuringCutover() error {
+
+}
+
 // ===========================================
 // Code to handle an almost standard Ferry run
 // ===========================================
@@ -205,6 +212,32 @@ func (f *IntegrationFerry) Main() error {
 	// the error handler to panic directly.
 	f.FlushBinlogAndStopStreaming()
 	wg.Wait()
+
+	if f.Verifier != nil {
+		err := f.SendStatusAndWaitUntilContinue(StatusVerifyDuringCutover)
+		if err != nil {
+			return err
+		}
+
+		result, err := f.Verifier.VerifyDuringCutover()
+		if err != nil {
+			return err
+		}
+
+		// We now send the results back to the integration server as each verifier
+		// might log them differently, making it difficult to assert from the logs
+		data := make([]string, 1, 1+len(result.IncorrectTables))
+
+		data[0] = strconv.FormatInt(int64(len(result.IncorrectTables)), 10)
+		for _, tableName := range result.IncorrectTables {
+			data = append(data, tableName)
+		}
+
+		err = f.SendStatusAndWaitUntilContinue(StatusVerified, data...)
+		if err != nil {
+			return err
+		}
+	}
 
 	return f.SendStatusAndWaitUntilContinue(StatusDone)
 }
