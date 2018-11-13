@@ -213,6 +213,13 @@ func (v *IterativeVerifier) Initialize() error {
 	}
 
 	v.reverifyStore = NewReverifyStore()
+
+	// The external caller don't need the StateTracker so we just create
+	// a private instance to ensure the code runs without a nil reference
+	// error.
+	if v.StateTracker == nil {
+		v.StateTracker = NewVerifierStateTracker(v)
+	}
 	return nil
 }
 
@@ -244,10 +251,13 @@ func (v *IterativeVerifier) VerifyBeforeCutover() error {
 	v.BinlogStreamer.AddEventListener(v.binlogEventListener)
 
 	v.logger.Debug("verifying all tables")
+
+	v.StateTracker.CurrentlyInterruptible = true
 	err := v.iterateAllTables(func(pk uint64, tableSchema *schema.Table) error {
 		v.reverifyStore.Add(ReverifyEntry{Pk: pk, Table: tableSchema})
 		return nil
 	})
+	v.StateTracker.CurrentlyInterruptible = false
 
 	if err == nil {
 		// This reverification phase is to reduce the size of the set of rows
@@ -420,45 +430,70 @@ func (v *IterativeVerifier) iterateTableFingerprints(table *schema.Table, mismat
 
 	// It only needs the PKs, not the entire row.
 	cursor.ColumnsToSelect = []string{fmt.Sprintf("`%s`", table.GetPKColumn(0).Name)}
-	return cursor.Each(func(batch *RowBatch) error {
-		metrics.Count("RowEvent", int64(batch.Size()), []MetricTag{
-			MetricTag{"table", table.Name},
-			MetricTag{"source", "iterative_verifier_before_cutover"},
-		}, 1.0)
-
-		pks := make([]uint64, 0, batch.Size())
-
-		for _, rowData := range batch.Values() {
-			pk, err := rowData.GetUint64(batch.PkIndex())
-			if err != nil {
-				return err
-			}
-
-			pks = append(pks, pk)
-		}
-
-		mismatchedPks, err := v.compareFingerprints(pks, batch.TableSchema())
+	err := cursor.Each(func(batch *RowBatch) error {
+		lastPk, err := v.verifyRowBatch(batch, mismatchedPkFunc)
 		if err != nil {
-			v.logger.WithError(err).Errorf("failed to fingerprint table %s", batch.TableSchema().String())
 			return err
 		}
 
-		if len(mismatchedPks) > 0 {
-			v.logger.WithFields(logrus.Fields{
-				"table":          batch.TableSchema().String(),
-				"mismatched_pks": mismatchedPks,
-			}).Info("found mismatched rows")
-
-			for _, pk := range mismatchedPks {
-				err := mismatchedPkFunc(pk, batch.TableSchema())
-				if err != nil {
-					return err
-				}
-			}
+		if v.StateTracker.CurrentlyInterruptible {
+			v.StateTracker.UpdateLastSuccessfulPK(table.String(), lastPk)
 		}
 
 		return nil
 	})
+
+	if err != nil {
+		return err
+	}
+
+	if v.StateTracker.CurrentlyInterruptible {
+		v.StateTracker.MarkTableAsCompleted(table.String())
+	}
+
+	return nil
+}
+
+func (v *IterativeVerifier) verifyRowBatch(batch *RowBatch, mismatchedPkFunc func(uint64, *schema.Table) error) (uint64, error) {
+	table := batch.TableSchema()
+
+	metrics.Count("RowEvent", int64(batch.Size()), []MetricTag{
+		MetricTag{"table", table.Name},
+		MetricTag{"source", "iterative_verifier_before_cutover"},
+	}, 1.0)
+
+	pks := make([]uint64, 0, batch.Size())
+
+	for _, rowData := range batch.Values() {
+		pk, err := rowData.GetUint64(batch.PkIndex())
+		if err != nil {
+			return 0, err
+		}
+
+		pks = append(pks, pk)
+	}
+
+	mismatchedPks, err := v.compareFingerprints(pks, batch.TableSchema())
+	if err != nil {
+		v.logger.WithError(err).Errorf("failed to fingerprint table %s", batch.TableSchema().String())
+		return 0, err
+	}
+
+	if len(mismatchedPks) > 0 {
+		v.logger.WithFields(logrus.Fields{
+			"table":          batch.TableSchema().String(),
+			"mismatched_pks": mismatchedPks,
+		}).Info("found mismatched rows")
+
+		for _, pk := range mismatchedPks {
+			err := mismatchedPkFunc(pk, batch.TableSchema())
+			if err != nil {
+				return 0, err
+			}
+		}
+	}
+
+	return pks[len(pks)-1], nil
 }
 
 func (v *IterativeVerifier) verifyStore(sourceTag string, additionalTags []MetricTag) (VerificationResult, error) {
@@ -578,6 +613,7 @@ func (v *IterativeVerifier) binlogEventListener(evs []DMLEvent) error {
 		}
 
 		v.reverifyStore.Add(ReverifyEntry{Pk: pk, Table: ev.TableSchema()})
+		v.StateTracker.UpdateLastWrittenBinlogPosition(ev.BinlogPosition())
 	}
 
 	return nil

@@ -53,6 +53,8 @@ func (t *IterativeVerifierTestSuite) SetupTest() {
 	t.reloadTables()
 
 	err = t.verifier.Initialize()
+
+	t.verifier.StateTracker = ghostferry.NewVerifierStateTracker(t.verifier)
 	testhelpers.PanicIfError(err)
 }
 

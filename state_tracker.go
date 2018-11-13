@@ -76,7 +76,8 @@ type VerifierStateTracker struct {
 	// to the ReverifyStore
 	*CopyStateTracker
 
-	ReverifyStore *ReverifyStore
+	CurrentlyInterruptible bool
+	ReverifyStore          *ReverifyStore
 }
 
 type StateTracker struct {
@@ -256,16 +257,16 @@ func (s *CopyStateTracker) updateSpeedLog(deltaPK uint64) {
 	}
 }
 
-func NewVerifierStateTracker(reverifyStore *ReverifyStore) *VerifierStateTracker {
+func NewVerifierStateTracker(verifier *IterativeVerifier) *VerifierStateTracker {
 	return &VerifierStateTracker{
 		CopyStateTracker: NewCopyStateTracker(0),
 
-		ReverifyStore: reverifyStore,
+		ReverifyStore: verifier.reverifyStore,
 	}
 }
 
-func NewVerifierStateTrackerFromSerializedState(reverifyStore *ReverifyStore, serializedState *VerifierSerializableState) *VerifierStateTracker {
-	s := NewVerifierStateTracker(reverifyStore)
+func NewVerifierStateTrackerFromSerializedState(verifier *IterativeVerifier, serializedState *VerifierSerializableState) *VerifierStateTracker {
+	s := NewVerifierStateTracker(verifier)
 	s.lastSuccessfulPrimaryKeys = serializedState.LastSuccessfulPrimaryKeys
 	s.completedTables = serializedState.CompletedTables
 	s.lastWrittenBinlogPosition = serializedState.LastWrittenBinlogPosition
@@ -273,6 +274,10 @@ func NewVerifierStateTrackerFromSerializedState(reverifyStore *ReverifyStore, se
 }
 
 func (s *VerifierStateTracker) Serialize() *VerifierSerializableState {
+	if !s.CurrentlyInterruptible {
+		return nil
+	}
+
 	baseState := s.CopyStateTracker.Serialize()
 
 	state := &VerifierSerializableState{

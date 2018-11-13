@@ -414,9 +414,9 @@ func (f *Ferry) Initialize() (err error) {
 	switch v := f.Verifier.(type) {
 	case *IterativeVerifier:
 		if f.StateToResumeFrom != nil && f.StateToResumeFrom.VerifierStage != nil {
-			f.StateTracker.VerifierStage = NewVerifierStateTrackerFromSerializedState(v.reverifyStore, f.StateToResumeFrom.VerifierStage)
+			f.StateTracker.VerifierStage = NewVerifierStateTrackerFromSerializedState(v, f.StateToResumeFrom.VerifierStage)
 		} else {
-			f.StateTracker.VerifierStage = NewVerifierStateTracker(v.reverifyStore)
+			f.StateTracker.VerifierStage = NewVerifierStateTracker(v)
 		}
 
 		v.StateTracker = f.StateTracker.VerifierStage
