@@ -76,8 +76,7 @@ type VerifierStateTracker struct {
 	// to the ReverifyStore
 	*CopyStateTracker
 
-	CurrentlyInterruptible bool
-	ReverifyStore          *ReverifyStore
+	ReverifyStore *ReverifyStore
 }
 
 type StateTracker struct {
@@ -274,10 +273,6 @@ func NewVerifierStateTrackerFromSerializedState(verifier *IterativeVerifier, ser
 }
 
 func (s *VerifierStateTracker) Serialize() *VerifierSerializableState {
-	if !s.CurrentlyInterruptible {
-		return nil
-	}
-
 	baseState := s.CopyStateTracker.Serialize()
 
 	state := &VerifierSerializableState{

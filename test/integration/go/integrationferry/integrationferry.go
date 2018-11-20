@@ -44,6 +44,7 @@ const (
 	StatusAfterRowCopy      string = "AFTER_ROW_COPY"
 	StatusBeforeBinlogApply string = "BEFORE_BINLOG_APPLY"
 	StatusAfterBinlogApply  string = "AFTER_BINLOG_APPLY"
+	StatusVerifyRowEvent    string = "VERIFY_ROW_EVENT"
 )
 
 type IntegrationFerry struct {
@@ -159,6 +160,15 @@ func (f *IntegrationFerry) Main() error {
 	err = f.Initialize()
 	if err != nil {
 		return err
+	}
+
+	if f.Verifier != nil {
+		v, ok := f.Verifier.(*ghostferry.IterativeVerifier)
+		if ok {
+			v.AddRowEventListener(func(batch *ghostferry.RowBatch) error {
+				return f.SendStatusAndWaitUntilContinue(StatusVerifyRowEvent, batch.TableSchema().Name)
+			})
+		}
 	}
 
 	// The reconciler currently does not emit any status while its running (i.e

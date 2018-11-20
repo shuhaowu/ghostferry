@@ -162,8 +162,9 @@ type IterativeVerifier struct {
 	Concurrency         int
 	MaxExpectedDowntime time.Duration
 
-	reverifyStore *ReverifyStore
-	logger        *logrus.Entry
+	reverifyStore     *ReverifyStore
+	logger            *logrus.Entry
+	rowEventListeners []func(*RowBatch) error
 
 	beforeCutoverVerifyDone    bool
 	verifyDuringCutoverStarted AtomicBoolean
@@ -214,24 +215,35 @@ func (v *IterativeVerifier) Initialize() error {
 
 	v.reverifyStore = NewReverifyStore()
 
-	// The external caller don't need the StateTracker so we just create
-	// a private instance to ensure the code runs without a nil reference
-	// error.
-	if v.StateTracker == nil {
-		v.StateTracker = NewVerifierStateTracker(v)
-	}
 	return nil
+}
+
+func (v *IterativeVerifier) AddRowEventListener(f func(*RowBatch) error) {
+	v.rowEventListeners = append(v.rowEventListeners, f)
 }
 
 func (v *IterativeVerifier) VerifyOnce() (VerificationResult, error) {
 	v.logger.Info("starting one-off verification of all tables")
 
-	err := v.iterateAllTables(func(pk uint64, tableSchema *schema.Table) error {
-		return VerificationResult{
-			DataCorrect:     false,
-			Message:         fmt.Sprintf("verification failed on table: %s for pk: %d", tableSchema.String(), pk),
-			IncorrectTables: []string{tableSchema.String()},
-		}
+	err := v.processApplicableTablesInParallel(func(table *schema.Table) error {
+		cursor := v.newCursorForTable(table, 0)
+
+		return cursor.Each(func(batch *RowBatch) error {
+			mismatchedPks, err := v.verifyRowBatch(batch)
+			if err != nil {
+				return err
+			}
+
+			for _, mismatchedPk := range mismatchedPks {
+				return VerificationResult{
+					DataCorrect:     false,
+					Message:         fmt.Sprintf("verification failed on table: %s for pk: %d", table.String(), mismatchedPk),
+					IncorrectTables: []string{table.String()},
+				}
+			}
+
+			return nil
+		})
 	})
 
 	v.logger.Info("one-off verification complete")
@@ -247,17 +259,61 @@ func (v *IterativeVerifier) VerifyOnce() (VerificationResult, error) {
 func (v *IterativeVerifier) VerifyBeforeCutover() error {
 	v.logger.Info("starting pre-cutover verification")
 
+	if v.beforeCutoverVerifyDone {
+		return errors.New("VerifyBeforeCutover called twice?")
+	}
+
+	// If the StateTracker is not given by the caller, we create an instance
+	// so we don't have to litter if v.StateTracker != nil everywhere.
+	if v.StateTracker == nil {
+		v.logger.Warn("StateTracker not given to iterative verifier, using a private instance instead")
+		v.StateTracker = NewVerifierStateTracker(v)
+	}
+
 	v.logger.Debug("attaching binlog event listener")
 	v.BinlogStreamer.AddEventListener(v.binlogEventListener)
 
 	v.logger.Debug("verifying all tables")
 
-	v.StateTracker.CurrentlyInterruptible = true
-	err := v.iterateAllTables(func(pk uint64, tableSchema *schema.Table) error {
-		v.reverifyStore.Add(ReverifyEntry{Pk: pk, Table: tableSchema})
+	err := v.processApplicableTablesInParallel(func(table *schema.Table) error {
+		startPK := v.StateTracker.LastSuccessfulPK(table.String())
+		cursor := v.newCursorForTable(table, startPK)
+
+		err := cursor.Each(func(batch *RowBatch) error {
+			mismatchedPks, err := v.verifyRowBatch(batch)
+			if err != nil {
+				return err
+			}
+
+			for _, mismatchedPk := range mismatchedPks {
+				v.reverifyStore.Add(ReverifyEntry{Pk: mismatchedPk, Table: table})
+			}
+
+			lastPk, err := batch.LastPk()
+			if err != nil {
+				return err
+			}
+
+			v.StateTracker.UpdateLastSuccessfulPK(table.String(), lastPk)
+
+			for _, listener := range v.rowEventListeners {
+				err = listener(batch)
+				if err != nil {
+					return err
+				}
+			}
+
+			return nil
+		})
+
+		if err != nil {
+			return err
+		}
+
+		v.StateTracker.MarkTableAsCompleted(table.String())
+
 		return nil
 	})
-	v.StateTracker.CurrentlyInterruptible = false
 
 	if err == nil {
 		// This reverification phase is to reduce the size of the set of rows
@@ -400,7 +456,13 @@ func (v *IterativeVerifier) reverifyUntilStoreIsSmallEnough(maxIterations int) e
 	return nil
 }
 
-func (v *IterativeVerifier) iterateAllTables(mismatchedPkFunc func(uint64, *schema.Table) error) error {
+func (v *IterativeVerifier) newCursorForTable(table *schema.Table, startPK uint64) *Cursor {
+	cursor := v.CursorConfig.NewCursorWithoutRowLock(table, startPK, math.MaxUint64)
+	cursor.ColumnsToSelect = []string{fmt.Sprintf("`%s`", table.GetPKColumn(0).Name)}
+	return cursor
+}
+
+func (v *IterativeVerifier) processApplicableTablesInParallel(f func(*schema.Table) error) error {
 	pool := &WorkerPool{
 		Concurrency: v.Concurrency,
 		Process: func(tableIndex int) (interface{}, error) {
@@ -410,11 +472,7 @@ func (v *IterativeVerifier) iterateAllTables(mismatchedPkFunc func(uint64, *sche
 				return nil, nil
 			}
 
-			err := v.iterateTableFingerprints(table, mismatchedPkFunc)
-			if err != nil {
-				v.logger.WithError(err).WithField("table", table.String()).Error("error occured during table verification")
-			}
-			return nil, err
+			return nil, f(table)
 		},
 	}
 
@@ -423,77 +481,23 @@ func (v *IterativeVerifier) iterateAllTables(mismatchedPkFunc func(uint64, *sche
 	return err
 }
 
-func (v *IterativeVerifier) iterateTableFingerprints(table *schema.Table, mismatchedPkFunc func(uint64, *schema.Table) error) error {
-	// The cursor will stop iterating when it cannot find anymore rows,
-	// so it will not iterate until MaxUint64.
-	cursor := v.CursorConfig.NewCursorWithoutRowLock(table, 0, math.MaxUint64)
-
-	// It only needs the PKs, not the entire row.
-	cursor.ColumnsToSelect = []string{fmt.Sprintf("`%s`", table.GetPKColumn(0).Name)}
-	err := cursor.Each(func(batch *RowBatch) error {
-		lastPk, err := v.verifyRowBatch(batch, mismatchedPkFunc)
-		if err != nil {
-			return err
-		}
-
-		if v.StateTracker.CurrentlyInterruptible {
-			v.StateTracker.UpdateLastSuccessfulPK(table.String(), lastPk)
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return err
-	}
-
-	if v.StateTracker.CurrentlyInterruptible {
-		v.StateTracker.MarkTableAsCompleted(table.String())
-	}
-
-	return nil
-}
-
-func (v *IterativeVerifier) verifyRowBatch(batch *RowBatch, mismatchedPkFunc func(uint64, *schema.Table) error) (uint64, error) {
-	table := batch.TableSchema()
-
+func (v *IterativeVerifier) verifyRowBatch(batch *RowBatch) ([]uint64, error) {
 	metrics.Count("RowEvent", int64(batch.Size()), []MetricTag{
-		MetricTag{"table", table.Name},
+		MetricTag{"table", batch.TableSchema().Name},
 		MetricTag{"source", "iterative_verifier_before_cutover"},
 	}, 1.0)
 
 	pks := make([]uint64, 0, batch.Size())
-
 	for _, rowData := range batch.Values() {
 		pk, err := rowData.GetUint64(batch.PkIndex())
 		if err != nil {
-			return 0, err
+			return []uint64{}, err
 		}
 
 		pks = append(pks, pk)
 	}
 
-	mismatchedPks, err := v.compareFingerprints(pks, batch.TableSchema())
-	if err != nil {
-		v.logger.WithError(err).Errorf("failed to fingerprint table %s", batch.TableSchema().String())
-		return 0, err
-	}
-
-	if len(mismatchedPks) > 0 {
-		v.logger.WithFields(logrus.Fields{
-			"table":          batch.TableSchema().String(),
-			"mismatched_pks": mismatchedPks,
-		}).Info("found mismatched rows")
-
-		for _, pk := range mismatchedPks {
-			err := mismatchedPkFunc(pk, batch.TableSchema())
-			if err != nil {
-				return 0, err
-			}
-		}
-	}
-
-	return pks[len(pks)-1], nil
+	return v.compareFingerprints(pks, batch.TableSchema())
 }
 
 func (v *IterativeVerifier) verifyStore(sourceTag string, additionalTags []MetricTag) (VerificationResult, error) {

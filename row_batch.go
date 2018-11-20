@@ -32,6 +32,10 @@ func (e *RowBatch) ValuesContainPk() bool {
 	return e.pkIndex >= 0
 }
 
+func (e *RowBatch) LastPk() (uint64, error) {
+	return e.values[len(e.values)-1].GetUint64(e.pkIndex)
+}
+
 func (e *RowBatch) Size() int {
 	return len(e.values)
 }

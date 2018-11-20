@@ -94,7 +94,7 @@ class TrivialIntegrationTests < GhostferryIntegration::TestCase
       assert_equal 0, incorrect_tables.length
     end
 
-    @ghostferry.run_with_iterative_verifier_enabled
+    @ghostferry.run(environment: {Ghostferry::ENV_KEY_ITERATIVE_VERIFIER => "1"})
     assert verified
     assert_test_table_is_identical
   end
@@ -135,7 +135,58 @@ class TrivialIntegrationTests < GhostferryIntegration::TestCase
       assert_equal ["gftest.test_table_1"], incorrect_tables
     end
 
-    @ghostferry.run_with_iterative_verifier_enabled
+    @ghostferry.run(environment: {Ghostferry::ENV_KEY_ITERATIVE_VERIFIER => "1"})
+    assert verified
+  end
+
+  def test_iterative_verifier_interrupt_resume
+    @dbs.seed_simple_database_with_single_table
+
+    dumped_state = nil
+    with_state_cleanup do
+      use_datawriter
+      batches_verified = 0
+      @ghostferry.on_status(Ghostferry::Status::VERIFY_ROW_EVENT) do
+        batches_verified += 1
+        if batches_verified >= 2
+          @ghostferry.send_signal("TERM")
+        end
+      end
+
+      dumped_state = @ghostferry.run_expecting_interrupt(environment: {Ghostferry::ENV_KEY_ITERATIVE_VERIFIER => "1"})
+      assert_basic_fields_exist_in_dumped_state(dumped_state)
+
+      refute dumped_state["VerifierStage"].nil?
+      refute dumped_state["VerifierStage"]["LastSuccessfulPrimaryKeys"].nil?
+      refute dumped_state["VerifierStage"]["CompletedTables"].nil?
+      refute dumped_state["VerifierStage"]["LastWrittenBinlogPosition"].nil?
+    end
+
+    # We want to write some data to the source database while Ghostferry is down
+    # to verify that it is copied over.
+    5.times do
+      @datawriter.insert_data(@dbs.source)
+      @datawriter.update_data(@dbs.source)
+      @datawriter.delete_data(@dbs.source)
+    end
+
+    verified = false
+
+    with_state_cleanup do
+      use_datawriter
+
+      @ghostferry.on_status(Ghostferry::Status::VERIFIED) do |num_failed, *incorrect_tables|
+        verified = true
+
+        assert_equal "0", num_failed
+        assert_equal [], incorrect_tables
+      end
+
+      @ghostferry.run(dumped_state, environment: {Ghostferry::ENV_KEY_ITERATIVE_VERIFIER => "1"})
+
+      assert_test_table_is_identical
+    end
+
     assert verified
   end
 end

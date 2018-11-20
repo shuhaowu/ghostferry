@@ -22,6 +22,7 @@ module GhostferryIntegration
 
     # Keep these in sync with integrationferry.go
     ENV_KEY_SOCKET_PATH = "GHOSTFERRY_INTEGRATION_SOCKET_PATH"
+    ENV_KEY_ITERATIVE_VERIFIER = "GHOSTFERRY_ITERATIVE_VERIFIER"
     MAX_MESSAGE_SIZE = 256
 
     SOCKET_PATH = ENV[ENV_KEY_SOCKET_PATH] || "/tmp/ghostferry-integration.sock"
@@ -43,6 +44,7 @@ module GhostferryIntegration
       AFTER_ROW_COPY = "AFTER_ROW_COPY"
       BEFORE_BINLOG_APPLY = "BEFORE_BINLOG_APPLY"
       AFTER_BINLOG_APPLY = "AFTER_BINLOG_APPLY"
+      VERIFY_ROW_EVENT = "VERIFY_ROW_EVENT"
     end
 
     attr_reader :stdout, :stderr, :exit_status, :pid
@@ -259,11 +261,6 @@ module GhostferryIntegration
       wait_until_ghostferry_run_is_complete
     ensure
       remove_socket
-    end
-
-    def run_with_iterative_verifier_enabled(resuming_state = nil, environment: {})
-      environment["GHOSTFERRY_ITERATIVE_VERIFIER"] = "1"
-      run(resuming_state, environment: environment)
     end
 
     # When using this method, you need to call it within the block of
