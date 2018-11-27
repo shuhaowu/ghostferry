@@ -48,9 +48,9 @@ func (s *SerializableState) MinBinlogPosition() mysql.Position {
 	c := s.CopyStage.LastWrittenBinlogPosition.Compare(s.VerifierStage.LastWrittenBinlogPosition)
 
 	if c >= 0 {
-		return s.CopyStage.LastWrittenBinlogPosition
-	} else {
 		return s.VerifierStage.LastWrittenBinlogPosition
+	} else {
+		return s.CopyStage.LastWrittenBinlogPosition
 	}
 }
 
