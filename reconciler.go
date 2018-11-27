@@ -140,7 +140,7 @@ func (r *Reconciler) Run() error {
 
 	// Setting up binlog streamer
 	r.BinlogStreamer.AddEventListener(r.AddRowsToStore)
-	err := r.BinlogStreamer.ConnectBinlogStreamerToMysqlFrom(r.StartFromBinlogPosition)
+	_, err := r.BinlogStreamer.ConnectBinlogStreamerToMysqlFrom(r.StartFromBinlogPosition)
 	if err != nil {
 		return err
 	}

@@ -506,6 +506,7 @@ func (f *Ferry) Start() error {
 	// in StateToResume. This is because RunReconcilerIfNecessary, which is
 	// required in the resuming case, will equalize the two stages' binlog
 	// position.
+	var pos siddontangmysql.Position
 	var err error
 	if f.StateToResumeFrom != nil {
 		// When resuming, we need to attach the iterative verifier's binlog
@@ -515,12 +516,17 @@ func (f *Ferry) Start() error {
 			f.iterativeVerifier.attachBinlogEventListener()
 		}
 
-		err = f.BinlogStreamer.ConnectBinlogStreamerToMysqlFrom(f.StateTracker.CopyStage.LastWrittenBinlogPosition())
+		pos, err = f.BinlogStreamer.ConnectBinlogStreamerToMysqlFrom(f.StateTracker.CopyStage.LastWrittenBinlogPosition())
 	} else {
-		err = f.BinlogStreamer.ConnectBinlogStreamerToMysql()
+		pos, err = f.BinlogStreamer.ConnectBinlogStreamerToMysql()
 	}
 	if err != nil {
 		return err
+	}
+
+	f.StateTracker.CopyStage.UpdateLastWrittenBinlogPosition(pos)
+	if f.StateTracker.VerifierStage != nil {
+		f.StateTracker.VerifierStage.UpdateLastWrittenBinlogPosition(pos)
 	}
 
 	return nil
