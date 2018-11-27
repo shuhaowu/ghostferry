@@ -58,6 +58,27 @@ func NewReverifyStore() *ReverifyStore {
 	return r
 }
 
+func DeserializeReverifyStore(serializedStore map[string][]uint64) *ReverifyStore {
+	r := NewReverifyStore()
+	for tableName, pks := range serializedStore {
+		splitTableName := strings.Split(tableName, ".")
+		tableId := TableIdentifier{splitTableName[0], splitTableName[1]}
+
+		if _, exists := r.MapStore[tableId]; !exists {
+			r.MapStore[tableId] = make(map[uint64]struct{})
+		}
+
+		for _, pk := range pks {
+			if _, exists := r.MapStore[tableId][pk]; !exists {
+				r.MapStore[tableId][pk] = struct{}{}
+				r.RowCount++
+			}
+		}
+	}
+
+	return r
+}
+
 func (r *ReverifyStore) Serialize() (map[string][]uint64, uint64) {
 	r.mapStoreMutex.Lock()
 	defer r.mapStoreMutex.Unlock()
@@ -166,8 +187,9 @@ type IterativeVerifier struct {
 	logger            *logrus.Entry
 	rowEventListeners []func(*RowBatch) error
 
-	beforeCutoverVerifyDone    bool
-	verifyDuringCutoverStarted AtomicBoolean
+	binlogEventListenerAttached bool
+	beforeCutoverVerifyDone     bool
+	verifyDuringCutoverStarted  AtomicBoolean
 
 	// Variables for verification in the background
 	verificationResultAndStatus VerificationResultAndStatus
@@ -270,12 +292,15 @@ func (v *IterativeVerifier) VerifyBeforeCutover() error {
 		v.StateTracker = NewVerifierStateTracker(v)
 	}
 
-	v.logger.Debug("attaching binlog event listener")
-	v.BinlogStreamer.AddEventListener(v.binlogEventListener)
+	v.attachBinlogEventListener()
 
 	v.logger.Debug("verifying all tables")
 
 	err := v.processApplicableTablesInParallel(func(table *schema.Table) error {
+		if v.StateTracker.IsTableComplete(table.String()) {
+			return nil
+		}
+
 		startPK := v.StateTracker.LastSuccessfulPK(table.String())
 		cursor := v.newCursorForTable(table, startPK)
 
@@ -421,6 +446,18 @@ func (v *IterativeVerifier) GetHashes(db *sql.DB, schema, table, pkColumn string
 		resultSet[pk] = rowData[1].([]byte)
 	}
 	return resultSet, nil
+}
+
+// This method should not be called from multiple threads.
+// That would be a bug in the code.
+func (v *IterativeVerifier) attachBinlogEventListener() {
+	if v.binlogEventListenerAttached {
+		return
+	}
+
+	v.logger.Debug("attaching binlog event listener")
+	v.BinlogStreamer.AddEventListener(v.binlogEventListener)
+	v.binlogEventListenerAttached = true
 }
 
 func (v *IterativeVerifier) reverifyUntilStoreIsSmallEnough(maxIterations int) error {

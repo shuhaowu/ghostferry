@@ -101,6 +101,20 @@ module GhostferryIntegration
       refute dumped_state["CopyStage"]["LastWrittenBinlogPosition"].nil?
     end
 
+    def assert_verifier_stage_exists_in_dumped_state(dumped_state)
+      refute dumped_state["VerifierStage"].nil?
+      refute dumped_state["VerifierStage"]["LastSuccessfulPrimaryKeys"].nil?
+      refute dumped_state["VerifierStage"]["CompletedTables"].nil?
+      refute dumped_state["VerifierStage"]["LastWrittenBinlogPosition"].nil?
+      refute dumped_state["VerifierStage"]["ReverifyStore"].nil?
+      refute dumped_state["VerifierStage"]["ReverifyStoreCount"].nil?
+      count = 0
+      dumped_state["VerifierStage"]["ReverifyStore"].each do |table, pks|
+        count += pks.length
+      end
+      assert_equal count, dumped_state["VerifierStage"]["ReverifyStoreCount"]
+    end
+
     protected
     def ghostferry_main_path
       raise NotImplementedError

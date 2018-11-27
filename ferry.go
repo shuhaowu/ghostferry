@@ -80,7 +80,8 @@ type Ferry struct {
 	DoneTime     time.Time
 	OverallState string
 
-	logger *logrus.Entry
+	logger            *logrus.Entry
+	iterativeVerifier *IterativeVerifier
 
 	rowCopyCompleteCh chan struct{}
 }
@@ -413,7 +414,9 @@ func (f *Ferry) Initialize() (err error) {
 
 	switch v := f.Verifier.(type) {
 	case *IterativeVerifier:
+		f.iterativeVerifier = v
 		if f.StateToResumeFrom != nil && f.StateToResumeFrom.VerifierStage != nil {
+			v.reverifyStore = DeserializeReverifyStore(f.StateToResumeFrom.VerifierStage.ReverifyStore)
 			f.StateTracker.VerifierStage = NewVerifierStateTrackerFromSerializedState(v, f.StateToResumeFrom.VerifierStage)
 		} else {
 			f.StateTracker.VerifierStage = NewVerifierStateTracker(v)
@@ -455,6 +458,10 @@ func (f *Ferry) RunReconcilerIfNecessary() error {
 		Throttler:        f.Throttler,
 		ErrorHandler:     f.ErrorHandler,
 		TableSchemaCache: f.TableSchemaCache,
+	}
+
+	if f.iterativeVerifier != nil {
+		r.BinlogStreamer.AddEventListener(f.iterativeVerifier.binlogEventListener)
 	}
 
 	err = r.Run()
@@ -501,6 +508,13 @@ func (f *Ferry) Start() error {
 	// position.
 	var err error
 	if f.StateToResumeFrom != nil {
+		// When resuming, we need to attach the iterative verifier's binlog
+		// listener early, otherwise the verifier will miss rows changed between
+		// now until VerifyBeforeCutover is called.
+		if f.iterativeVerifier != nil {
+			f.iterativeVerifier.attachBinlogEventListener()
+		}
+
 		err = f.BinlogStreamer.ConnectBinlogStreamerToMysqlFrom(f.StateTracker.CopyStage.LastWrittenBinlogPosition())
 	} else {
 		err = f.BinlogStreamer.ConnectBinlogStreamerToMysql()
