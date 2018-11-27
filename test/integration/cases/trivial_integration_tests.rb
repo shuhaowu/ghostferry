@@ -307,7 +307,7 @@ class TrivialIntegrationTests < GhostferryIntegration::TestCase
     verified = false
     with_isolated_setup_and_teardown do
       changed_id = 0
-      @ghostferry.on_status(Ghostferry::Status::START) do
+      @ghostferry.on_status(Ghostferry::Status::BINLOG_STREAMING_STARTED) do
         id = @dbs.source.query("SELECT id FROM #{DbManager::DEFAULT_FULL_TABLE_NAME} ORDER BY id ASC LIMIT 1").first["id"]
         @dbs.source.query("UPDATE #{DbManager::DEFAULT_FULL_TABLE_NAME} SET data = 'modified' WHERE id = #{id}")
         @dbs.target.query("DELETE FROM #{DbManager::DEFAULT_FULL_TABLE_NAME} WHERE id = #{id}")
