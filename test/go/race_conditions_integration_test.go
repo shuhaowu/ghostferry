@@ -1,6 +1,7 @@
 package test
 
 import (
+	"database/sql"
 	"fmt"
 	"testing"
 	"time"
@@ -10,9 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func setupSingleEntryTable(f *testhelpers.TestFerry) {
-	testhelpers.SeedInitialData(f.SourceDB, "gftest", "table1", 1)
-	testhelpers.SeedInitialData(f.TargetDB, "gftest", "table1", 0)
+func setupSingleEntryTable(sourceDB, targetDB *sql.DB) {
+	testhelpers.SeedInitialData(sourceDB, "gftest", "table1", 1)
+	testhelpers.SeedInitialData(targetDB, "gftest", "table1", 0)
 }
 
 func TestSelectUpdateBinlogCopy(t *testing.T) {
@@ -127,9 +128,9 @@ func TestSelectCopyUpdateBinlog(t *testing.T) {
 func TestOnlyDeleteRowWithMaxPrimaryKey(t *testing.T) {
 	testcase := &testhelpers.IntegrationTestCase{
 		T: t,
-		SetupAction: func(f *testhelpers.TestFerry) {
-			testhelpers.SeedInitialData(f.SourceDB, "gftest", "table1", 2)
-			testhelpers.SeedInitialData(f.TargetDB, "gftest", "table1", 0)
+		SetupAction: func(sourceDB, targetDB *sql.DB) {
+			testhelpers.SeedInitialData(sourceDB, "gftest", "table1", 2)
+			testhelpers.SeedInitialData(targetDB, "gftest", "table1", 0)
 		},
 		Ferry: testhelpers.NewTestFerry(),
 	}

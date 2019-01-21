@@ -38,14 +38,14 @@ func addTypesToTable(db *sql.DB, dbName, tableName string) {
 	testhelpers.PanicIfError(err)
 }
 
-func setupMultiTypeTable(f *testhelpers.TestFerry) {
-	testhelpers.SeedInitialData(f.SourceDB, "gftest", "table1", 0)
-	testhelpers.SeedInitialData(f.TargetDB, "gftest", "table1", 0)
+func setupMultiTypeTable(sourceDB, targetDB *sql.DB) {
+	testhelpers.SeedInitialData(sourceDB, "gftest", "table1", 0)
+	testhelpers.SeedInitialData(targetDB, "gftest", "table1", 0)
 
-	addTypesToTable(f.SourceDB, "gftest", "table1")
-	addTypesToTable(f.TargetDB, "gftest", "table1")
+	addTypesToTable(sourceDB, "gftest", "table1")
+	addTypesToTable(targetDB, "gftest", "table1")
 
-	tx, err := f.SourceDB.Begin()
+	tx, err := sourceDB.Begin()
 	testhelpers.PanicIfError(err)
 
 	for i := 0; i < 100; i++ {
@@ -69,17 +69,17 @@ func setupMultiTypeTable(f *testhelpers.TestFerry) {
 	testhelpers.PanicIfError(tx.Commit())
 }
 
-func setupFixedPointDecimalTypeTable(f *testhelpers.TestFerry) {
-	testhelpers.SeedInitialData(f.SourceDB, "gftest", "table1", 0)
-	testhelpers.SeedInitialData(f.TargetDB, "gftest", "table1", 0)
+func setupFixedPointDecimalTypeTable(sourceDB, targetDB *sql.DB) {
+	testhelpers.SeedInitialData(sourceDB, "gftest", "table1", 0)
+	testhelpers.SeedInitialData(targetDB, "gftest", "table1", 0)
 
 	query := "ALTER TABLE gftest.table1 " +
 		"ADD decimal_col DECIMAL(18, 14)"
 
-	_, err := f.SourceDB.Exec(query)
+	_, err := sourceDB.Exec(query)
 	testhelpers.PanicIfError(err)
 
-	_, err = f.TargetDB.Exec(query)
+	_, err = targetDB.Exec(query)
 	testhelpers.PanicIfError(err)
 }
 

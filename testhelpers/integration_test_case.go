@@ -1,6 +1,7 @@
 package testhelpers
 
 import (
+	"database/sql"
 	"fmt"
 	"sync"
 	"testing"
@@ -12,7 +13,7 @@ import (
 type IntegrationTestCase struct {
 	T *testing.T
 
-	SetupAction                   func(*TestFerry)
+	SetupAction                   func(*sql.DB, *sql.DB)
 	AfterStartBinlogStreaming     func(*TestFerry)
 	AfterRowCopyIsComplete        func(*TestFerry)
 	BeforeStoppingBinlogStreaming func(*TestFerry)
@@ -21,6 +22,8 @@ type IntegrationTestCase struct {
 
 	DisableChecksumVerifier bool
 
+	SourceDB   *sql.DB
+	TargetDB   *sql.DB
 	DataWriter DataWriter
 	Ferry      *TestFerry
 	Verifier   *ghostferry.ChecksumTableVerifier
@@ -44,10 +47,12 @@ func (this *IntegrationTestCase) CopyData() {
 
 func (this *IntegrationTestCase) Setup() {
 	SetupTest()
+	var err error
+	this.SourceDB, this.TargetDB, err = NewSourceAndTargetConnection()
+	PanicIfError(err)
+	this.SetupAction(this.SourceDB, this.TargetDB)
 
 	PanicIfError(this.Ferry.Initialize())
-
-	this.callCustomAction(this.SetupAction)
 }
 
 func (this *IntegrationTestCase) StartFerryAndDataWriter() {

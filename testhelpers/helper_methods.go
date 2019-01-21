@@ -15,6 +15,12 @@ func PanicIfError(err error) {
 	}
 }
 
+func NewSourceAndTargetConnection() (*sql.DB, *sql.DB, error) {
+	f := NewTestFerry()
+	err := f.Initialize()
+	return f.SourceDB, f.TargetDB, err
+}
+
 func ProcessListContainsQueries(db *sql.DB, queries []string) bool {
 	rows, err := db.Query("SHOW FULL PROCESSLIST")
 	if err != nil {

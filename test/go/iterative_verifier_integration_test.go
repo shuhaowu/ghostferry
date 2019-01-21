@@ -1,6 +1,7 @@
 package test
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/Shopify/ghostferry"
@@ -116,8 +117,8 @@ func TestIgnoresColumns(t *testing.T) {
 
 	testcase := &testhelpers.IntegrationTestCase{
 		T: t,
-		SetupAction: func(ferry *testhelpers.TestFerry) {
-			setupSingleTableDatabase(ferry)
+		SetupAction: func(sourceDB, targetDB *sql.DB) {
+			setupSingleTableDatabase(sourceDB, targetDB)
 			iterativeVerifier.IgnoredColumns = map[string]map[string]struct{}{"table1": {"data": struct{}{}}}
 		},
 		AfterRowCopyIsComplete: func(ferry *testhelpers.TestFerry) {
@@ -163,8 +164,8 @@ func TestIgnoresTables(t *testing.T) {
 
 	testcase := &testhelpers.IntegrationTestCase{
 		T: t,
-		SetupAction: func(ferry *testhelpers.TestFerry) {
-			setupSingleTableDatabase(ferry)
+		SetupAction: func(sourceDB, targetDB *sql.DB) {
+			setupSingleTableDatabase(sourceDB, targetDB)
 			iterativeVerifier.IgnoredTables = []string{"table1"}
 		},
 		AfterRowCopyIsComplete: func(ferry *testhelpers.TestFerry) {
